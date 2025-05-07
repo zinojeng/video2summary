@@ -1,0 +1,58 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# 視頻和音頻文件
+*.mp4
+*.mp3
+*.wav
+*.aac
+*.avi
+*.mkv
+*.mov
+
+# 測試資料夾
+test_slides/
+video_slides_*/
+
+# 環境變數檔案
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# PyCharm 檔案
+.idea/
+.iml
+
+# VS Code 檔案
+.vscode/
+*.code-workspace
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._* 
