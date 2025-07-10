@@ -741,6 +741,29 @@ class VideoAudioProcessor:
             text="（值越低檢測越敏感，可能會捕獲較多幻燈片）"
         ).pack(side=tk.LEFT, padx=10)
         
+        # 捕獲模式選擇
+        mode_frame = tk.Frame(frame)
+        mode_frame.pack(fill=tk.X, padx=20, pady=5)
+        
+        tk.Label(mode_frame, text="捕獲模式:").pack(side=tk.LEFT, padx=5)
+        
+        self.capture_mode_var = tk.StringVar(value="standard")
+        
+        tk.Radiobutton(
+            mode_frame, text="標準模式", 
+            variable=self.capture_mode_var, value="standard"
+        ).pack(side=tk.LEFT, padx=5)
+        
+        tk.Radiobutton(
+            mode_frame, text="改進模式（更快更準確）", 
+            variable=self.capture_mode_var, value="improved"
+        ).pack(side=tk.LEFT, padx=5)
+        
+        tk.Radiobutton(
+            mode_frame, text="超級模式（檢測動畫效果）", 
+            variable=self.capture_mode_var, value="ultra"
+        ).pack(side=tk.LEFT, padx=5)
+        
         # 狀態顯示
         self.slide_status_var = tk.StringVar(value="準備就緒")
         status_label = tk.Label(
@@ -796,9 +819,54 @@ class VideoAudioProcessor:
         self.capture_btn.config(state=tk.DISABLED)
         
         def capture_thread():
-            success, result = capture_slides_from_video(
-                video_path, output_folder, threshold
-            )
+            # 根據選擇的模式使用不同的捕獲方法
+            capture_mode = self.capture_mode_var.get()
+            
+            if capture_mode == "improved":
+                try:
+                    # 嘗試使用改進的捕獲方法
+                    from improved_slide_capture import capture_slides_improved
+                    success, result = capture_slides_improved(
+                        video_path, output_folder, threshold
+                    )
+                except ImportError:
+                    # 如果無法導入改進模組，回退到標準方法
+                    self.root.after(0, lambda: self.slide_status_var.set(
+                        "改進模組不可用，使用標準模式..."
+                    ))
+                    success, result = capture_slides_from_video(
+                        video_path, output_folder, threshold
+                    )
+            elif capture_mode == "ultra":
+                try:
+                    # 嘗試使用超級捕獲方法（檢測動畫）
+                    from ultra_slide_capture import capture_slides_ultra
+                    self.root.after(0, lambda: self.slide_status_var.set(
+                        "使用超級模式，檢測動畫效果..."
+                    ))
+                    success, result = capture_slides_ultra(
+                        video_path, output_folder, threshold
+                    )
+                except ImportError:
+                    # 如果無法導入超級模組，回退到改進方法
+                    self.root.after(0, lambda: self.slide_status_var.set(
+                        "超級模組不可用，嘗試改進模式..."
+                    ))
+                    try:
+                        from improved_slide_capture import capture_slides_improved
+                        success, result = capture_slides_improved(
+                            video_path, output_folder, threshold
+                        )
+                    except ImportError:
+                        # 最終回退到標準方法
+                        success, result = capture_slides_from_video(
+                            video_path, output_folder, threshold
+                        )
+            else:
+                # 使用標準捕獲方法
+                success, result = capture_slides_from_video(
+                    video_path, output_folder, threshold
+                )
             
             # 在主線程中更新 UI
             self.root.after(0, lambda: self.capture_completed(success, result))

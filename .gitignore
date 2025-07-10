@@ -32,6 +32,10 @@ wheels/
 # 測試資料夾
 test_slides/
 video_slides_*/
+slides_*_*/
+demo_*/
+time_capture_*/
+*.png
 
 # 環境變數檔案
 .env
