@@ -18,6 +18,8 @@ import traceback
 import threading
 from PIL import Image, ImageTk
 import importlib
+import json
+from collections import defaultdict
 
 # 需要時會動態導入的模塊:
 # - moviepy (extract_audio_from_video)
@@ -135,7 +137,38 @@ def extract_audio_from_video(video_path, output_path=None, format="mp3"):
         return False, error_msg
 
 
-def capture_slides_from_video(video_path, output_folder=None, similarity_threshold=0.8):
+def calculate_phash(img, hash_size=8):
+    """計算感知哈希（pHash）"""
+    import cv2
+    import numpy as np
+    
+    # 轉換為灰度圖
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if len(img.shape) == 3 else img
+    
+    # 調整大小到 hash_size x hash_size
+    resized = cv2.resize(gray, (hash_size, hash_size))
+    
+    # 計算DCT
+    dct_result = cv2.dct(np.float32(resized))
+    
+    # 只保留左上角的低頻部分
+    dct_low = dct_result[:hash_size, :hash_size]
+    
+    # 計算平均值（排除第一個元素）
+    avg = np.mean(dct_low[1:, 1:])
+    
+    # 生成哈希
+    hash_bits = (dct_low > avg).flatten()
+    
+    # 轉換為十六進制字符串
+    hash_int = 0
+    for bit in hash_bits:
+        hash_int = (hash_int << 1) | int(bit)
+    
+    return format(hash_int, f'0{hash_size*hash_size//4}x')
+
+
+def capture_slides_from_video(video_path, output_folder=None, similarity_threshold=0.8, enable_metadata=True):
     """
     從視頻文件中捕獲幻燈片
     
@@ -143,6 +176,7 @@ def capture_slides_from_video(video_path, output_folder=None, similarity_thresho
         video_path: 視頻文件路徑
         output_folder: 輸出幻燈片圖片的文件夾，默認為 video_slides
         similarity_threshold: 圖像相似度閾值，用於檢測幻燈片變化，值越低檢測越敏感
+        enable_metadata: 是否生成元數據文件
         
     返回:
         success: 是否成功
@@ -183,6 +217,10 @@ def capture_slides_from_video(video_path, output_folder=None, similarity_thresho
         prev_frame = None
         saved_count = 0
         last_saved_time = -1000  # 上次保存的時間點，初始為負值
+        
+        # 元數據相關
+        slides_data = []
+        frame_hashes = {}  # 存儲幀哈希
 
         while True:
             # 設置當前幀位置
@@ -205,18 +243,45 @@ def capture_slides_from_video(video_path, output_folder=None, similarity_thresho
                 current_time - last_saved_time >= 2.0 and  # 確保至少間隔2秒
                 ssim(prev_frame, gray_frame) < similarity_threshold
             ):
-                # 保存當前幀
-                output_path = os.path.join(
-                    output_folder, f"slide_{saved_count:03d}.png"
-                )
-                cv2.imwrite(output_path, frame)
-                saved_count += 1
-                last_saved_time = current_time
+                # 計算感知哈希
+                phash = calculate_phash(frame)
                 
-                # 更新上一幀
-                prev_frame = gray_frame
+                # 檢查是否為重複幀
+                is_duplicate = False
+                for stored_hash in frame_hashes.values():
+                    # 計算哈希相似度
+                    hamming_dist = bin(int(phash, 16) ^ int(stored_hash, 16)).count('1')
+                    if hamming_dist < 5:  # 相似度闾值
+                        is_duplicate = True
+                        break
                 
-                print(f"保存幻燈片 {saved_count} 於 {current_time:.2f} 秒")
+                if not is_duplicate:
+                    # 生成文件名
+                    filename = f"slide_{saved_count:03d}_t{current_time:.1f}s_h{phash[:8]}.jpg"
+                    output_path = os.path.join(output_folder, filename)
+                    
+                    # 保存圖片
+                    cv2.imwrite(output_path, frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
+                    
+                    # 記錄元數據
+                    frame_hashes[frame_idx] = phash
+                    slides_data.append({
+                        'index': saved_count,
+                        'filename': filename,
+                        'frame_index': frame_idx,
+                        'timestamp': current_time,
+                        'phash': phash
+                    })
+                    
+                    saved_count += 1
+                    last_saved_time = current_time
+                    
+                    # 更新上一幀
+                    prev_frame = gray_frame
+                    
+                    print(f"保存幻燈片 {saved_count}: {filename}")
+                else:
+                    print(f"跳過重複幀 於 {current_time:.2f} 秒")
             
             # 更新幀索引，跳過一些幀以提高效率
             frame_idx += int(fps * sample_interval)
@@ -227,6 +292,19 @@ def capture_slides_from_video(video_path, output_folder=None, similarity_thresho
                 
         # 釋放資源
         cap.release()
+        
+        # 保存元數據
+        if enable_metadata and saved_count > 0:
+            metadata_path = os.path.join(output_folder, 'slides_metadata.json')
+            with open(metadata_path, 'w', encoding='utf-8') as f:
+                json.dump({
+                    'video_path': video_path,
+                    'total_frames': frame_count,
+                    'fps': fps,
+                    'threshold': similarity_threshold,
+                    'slides': slides_data
+                }, f, indent=2, ensure_ascii=False)
+            print(f"\n元數據已保存到: {metadata_path}")
         
         return True, {
             "output_folder": output_folder,

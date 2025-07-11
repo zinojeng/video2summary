@@ -14,6 +14,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 from skimage.metrics import structural_similarity as ssim
 import hashlib
+import json
+from collections import defaultdict
 
 
 class ImprovedSlideCapture:
@@ -26,10 +28,55 @@ class ImprovedSlideCapture:
         self.cap = cv2.VideoCapture(video_path)
         self.total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
         self.fps = self.cap.get(cv2.CAP_PROP_FPS)
+        self.similarity_groups = defaultdict(list)  # 存儲相似圖片分組
+        self.metadata = []  # 存儲幻燈片元數據
         
     def __del__(self):
         if hasattr(self, 'cap'):
             self.cap.release()
+    
+    def calculate_phash(self, img: np.ndarray, hash_size: int = 8) -> str:
+        """計算感知哈希（pHash）"""
+        # 轉換為灰度圖
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if len(img.shape) == 3 else img
+        
+        # 調整大小到 hash_size x hash_size
+        resized = cv2.resize(gray, (hash_size, hash_size))
+        
+        # 計算DCT
+        dct_result = cv2.dct(np.float32(resized))
+        
+        # 只保留左上角的低頻部分
+        dct_low = dct_result[:hash_size, :hash_size]
+        
+        # 計算平均值（排除第一個元素）
+        avg = np.mean(dct_low[1:, 1:])
+        
+        # 生成哈希
+        hash_bits = (dct_low > avg).flatten()
+        
+        # 轉換為十六進制字符串
+        hash_int = 0
+        for bit in hash_bits:
+            hash_int = (hash_int << 1) | int(bit)
+        
+        return format(hash_int, f'0{hash_size*hash_size//4}x')
+    
+    def calculate_phash_similarity(self, hash1: str, hash2: str) -> float:
+        """計算兩個感知哈希的相似度"""
+        # 將十六進制轉換為二進制
+        int1 = int(hash1, 16)
+        int2 = int(hash2, 16)
+        
+        # 計算漢明距離
+        xor = int1 ^ int2
+        hamming_distance = bin(xor).count('1')
+        
+        # 轉換為相似度（0-1之間）
+        max_distance = len(hash1) * 4  # 每個十六進制字符有4位
+        similarity = 1 - (hamming_distance / max_distance)
+        
+        return similarity
     
     def calculate_histogram_diff(self, img1: np.ndarray, img2: np.ndarray) -> float:
         """計算兩張圖片的直方圖差異（快速）"""
@@ -252,35 +299,117 @@ class ImprovedSlideCapture:
         # 重新排序
         final_frames.sort(key=lambda x: x[0])
         
-        # 最終去重（使用圖片哈希）
+        # 最終去重和分組（使用感知哈希）
         unique_frames = []
-        frame_hashes = set()
+        frame_data = []  # 存儲幀數據和哈希
         
+        # 計算所有幀的感知哈希
         for frame_idx, frame in final_frames:
-            # 計算圖片哈希
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            resized = cv2.resize(gray, (8, 8))
-            frame_hash = hashlib.md5(resized.tobytes()).hexdigest()
-            
-            if frame_hash not in frame_hashes:
-                frame_hashes.add(frame_hash)
-                unique_frames.append((frame_idx, frame))
+            phash = self.calculate_phash(frame)
+            frame_data.append({
+                'frame_idx': frame_idx,
+                'frame': frame,
+                'phash': phash,
+                'group': -1  # 初始未分組
+            })
+        
+        # 進行相似性分組
+        group_id = 0
+        for i, data in enumerate(frame_data):
+            if data['group'] == -1:  # 未分組
+                data['group'] = group_id
+                # 檢查後續幀是否相似
+                for j in range(i + 1, len(frame_data)):
+                    if frame_data[j]['group'] == -1:
+                        similarity = self.calculate_phash_similarity(
+                            data['phash'], 
+                            frame_data[j]['phash']
+                        )
+                        if similarity > 0.9:  # 90%相似度閾值
+                            frame_data[j]['group'] = group_id
+                group_id += 1
+        
+        # 每組只保留最清晰的一張（基於拉普拉斯變換）
+        groups = defaultdict(list)
+        for data in frame_data:
+            groups[data['group']].append(data)
+        
+        for group_id, group_frames in groups.items():
+            if len(group_frames) == 1:
+                unique_frames.append((group_frames[0]['frame_idx'], group_frames[0]['frame']))
+            else:
+                # 選擇最清晰的幀
+                best_frame = max(group_frames, key=lambda x: cv2.Laplacian(
+                    cv2.cvtColor(x['frame'], cv2.COLOR_BGR2GRAY), cv2.CV_64F
+                ).var())
+                unique_frames.append((best_frame['frame_idx'], best_frame['frame']))
+                # 記錄相似幀信息
+                self.similarity_groups[group_id] = [
+                    (f['frame_idx'], f['phash']) for f in group_frames
+                ]
+        
+        # 按時間排序
+        unique_frames.sort(key=lambda x: x[0])
         
         return unique_frames
     
     def save_slides(self, slide_frames: List[Tuple[int, np.ndarray]]) -> List[str]:
-        """保存幻燈片"""
+        """保存幻燈片並生成元數據"""
         saved_files = []
+        
+        # 查找每個幀所屬的組
+        frame_to_group = {}
+        for group_id, frames in self.similarity_groups.items():
+            for frame_idx, _ in frames:
+                frame_to_group[frame_idx] = group_id
         
         for idx, (frame_idx, frame) in enumerate(slide_frames):
             timestamp = frame_idx / self.fps
-            filename = f"slide_{idx+1:03d}_t{timestamp:.1f}s.jpg"
+            phash = self.calculate_phash(frame)
+            
+            # 生成文件名
+            group_id = frame_to_group.get(frame_idx, -1)
+            if group_id != -1:
+                # 有相似組的情況
+                filename = f"slide_g{group_id:02d}_{idx+1:03d}_t{timestamp:.1f}s_h{phash[:8]}.jpg"
+            else:
+                # 獨立幻燈片
+                filename = f"slide_{idx+1:03d}_t{timestamp:.1f}s_h{phash[:8]}.jpg"
+            
             filepath = os.path.join(self.output_folder, filename)
             
-            cv2.imwrite(filepath, frame)
+            # 保存圖片
+            cv2.imwrite(filepath, frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
             saved_files.append(filepath)
             
+            # 收集元數據
+            self.metadata.append({
+                'index': idx + 1,
+                'filename': filename,
+                'frame_index': frame_idx,
+                'timestamp': timestamp,
+                'phash': phash,
+                'group_id': group_id,
+                'similar_frames': self.similarity_groups.get(group_id, [])
+            })
+            
             print(f"保存幻燈片 {idx+1}/{len(slide_frames)}: {filename}")
+        
+        # 保存元數據文件
+        metadata_path = os.path.join(self.output_folder, 'slides_metadata.json')
+        with open(metadata_path, 'w', encoding='utf-8') as f:
+            json.dump({
+                'video_path': self.video_path,
+                'total_frames': self.total_frames,
+                'fps': self.fps,
+                'threshold': self.threshold,
+                'slides': self.metadata,
+                'similarity_groups': {
+                    str(k): v for k, v in self.similarity_groups.items()
+                }
+            }, f, indent=2, ensure_ascii=False)
+        
+        print(f"\n元數據已保存到: {metadata_path}")
         
         return saved_files
 
