@@ -37,7 +37,41 @@ def convert_images_to_markdown(
         info: 包含轉換統計信息的字典
     """
     try:
-        info = {"success": True, "processed_images": len(image_paths)}
+        # 過濾掉 macOS 的隱藏文件和非圖片文件
+        valid_image_paths = []
+        skipped_files = []
+        supported_formats = {'.png', '.jpg', '.jpeg', '.gif', '.webp'}
+        
+        for img_path in image_paths:
+            basename = os.path.basename(img_path)
+            # 跳過以 ._ 開頭的 macOS 隱藏文件
+            if basename.startswith('._'):
+                skipped_files.append(img_path)
+                print(f"跳過 macOS 隱藏文件: {basename}")
+                continue
+            
+            # 檢查文件擴展名
+            ext = os.path.splitext(basename)[1].lower()
+            if ext not in supported_formats:
+                skipped_files.append(img_path)
+                print(f"跳過不支持的文件格式: {basename}")
+                continue
+                
+            valid_image_paths.append(img_path)
+        
+        if not valid_image_paths:
+            return False, "", {
+                "error": "沒有有效的圖片文件可處理",
+                "skipped_files": skipped_files,
+                "success": False
+            }
+        
+        info = {
+            "success": True, 
+            "processed_images": len(valid_image_paths),
+            "skipped_files": len(skipped_files),
+            "total_files": len(image_paths)
+        }
         
         # 如果需要使用 LLM 進行圖片識別和分析
         if use_llm and api_key:
@@ -47,11 +81,11 @@ def convert_images_to_markdown(
                 # 設置 API Key
                 openai.api_key = api_key
                 
-                print(f"使用 {model} 模型分析 {len(image_paths)} 張圖片...")
+                print(f"使用 {model} 模型分析 {len(valid_image_paths)} 張圖片...")
                 with open(output_file, 'w', encoding='utf-8') as f:
                     f.write(f"# {title}\n\n")
                     
-                    for i, img_path in enumerate(image_paths):
+                    for i, img_path in enumerate(valid_image_paths):
                         # 添加標題和圖片
                         slide_num = i + 1
                         f.write(f"## 幻燈片 {slide_num}\n\n")
@@ -69,7 +103,7 @@ def convert_images_to_markdown(
                         
                         # 使用 OpenAI 視覺模型分析圖片
                         print(
-                            f"分析圖片 {slide_num}/{len(image_paths)}: "
+                            f"分析圖片 {slide_num}/{len(valid_image_paths)}: "
                             f"{os.path.basename(img_path)}"
                         )
                         
@@ -145,7 +179,7 @@ def convert_images_to_markdown(
         with open(output_file, 'w', encoding='utf-8') as f:
             f.write(f"# {title}\n\n")
             
-            for i, img_path in enumerate(image_paths):
+            for i, img_path in enumerate(valid_image_paths):
                 # 獲取相對路徑
                 try:
                     rel_path = os.path.relpath(
@@ -197,9 +231,12 @@ def process_images_to_ppt(
         from pptx import Presentation
         from pptx.util import Inches
         
-        # 獲取所有圖片文件
+        # 獲取所有圖片文件（過濾掉 macOS 隱藏文件）
         image_files = []
         for filename in sorted(os.listdir(image_dir)):
+            # 跳過 macOS 隱藏文件
+            if filename.startswith('._'):
+                continue
             if filename.lower().endswith(('.png', '.jpg', '.jpeg')):
                 image_files.append(os.path.join(image_dir, filename))
                 

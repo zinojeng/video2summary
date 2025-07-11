@@ -271,9 +271,12 @@ def generate_ppt_from_images(image_folder, output_file=None, title="視頻捕獲
         slide_width = prs.slide_width
         slide_height = prs.slide_height
         
-        # 獲取所有圖片文件
+        # 獲取所有圖片文件（過濾掉 macOS 隱藏文件）
         image_files = []
         for filename in sorted(os.listdir(image_folder)):
+            # 跳過 macOS 隱藏文件
+            if filename.startswith('._'):
+                continue
             if filename.lower().endswith(('.png', '.jpg', '.jpeg')):
                 image_files.append(os.path.join(image_folder, filename))
                 
@@ -334,9 +337,12 @@ def generate_markdown_from_images(image_folder, output_file=None, title="視頻�
                 f"{os.path.basename(image_folder)}.md"
             )
             
-        # 獲取所有圖片文件
+        # 獲取所有圖片文件（過濾掉 macOS 隱藏文件）
         image_files = []
         for filename in sorted(os.listdir(image_folder)):
+            # 跳過 macOS 隱藏文件
+            if filename.startswith('._'):
+                continue
             if filename.lower().endswith(('.png', '.jpg', '.jpeg')):
                 image_files.append(os.path.join(image_folder, filename))
                 
@@ -1048,9 +1054,12 @@ class VideoAudioProcessor:
             messagebox.showerror("錯誤", f"選擇的路徑不是目錄: {folder}")
             return
             
-        # 檢查文件夾中是否有圖片
+        # 檢查文件夾中是否有圖片（排除 macOS 隱藏文件）
         has_images = False
         for filename in os.listdir(folder):
+            # 跳過 macOS 隱藏文件
+            if filename.startswith('._'):
+                continue
             if filename.lower().endswith(('.png', '.jpg', '.jpeg')):
                 has_images = True
                 break
