@@ -1,0 +1,24 @@
+{
+  "timestamp": "2025年 7月12日 週六 23時27分49秒 CST",
+  "statistics": {
+    "total": 28,
+    "has_selected": 22,
+    "openai_done": 22,
+    "gemini_done": 11,
+    "both_done": 11,
+    "none_done": 0,
+    "no_selected": [
+      "Advancing Care for Diabetic Kidney Disease—Top Research Abstracts/Advancing Care for Diabetic Kidney Disease—Top Research Abstracts  _slides",
+      "Advancing Diabetic Retinopathy Care—Integrating Clinical Insights, AI, and Health Equity/Advancing Diabetic Retinopathy Care—Integrating Clinical Insights, AI, and Health Equity_slides",
+      "Diabetic Neuropathy—Unraveling Pain Mechanisms, Systemic Complications, and Innovations in Prevention and Treatment (With ADA Presidents' Select Abstract Presentation)/Diabetic Neuropathy—Unraveling Pain Mechanisms, Systemic Complications, and Innovations in Prevention and Treatment (With ADA Presidents' Select Abstract Presentation)_slides",
+      "Innovating Stem Cell Manufacturing and Engraftment Strategies for Cell Replacement Therapy/Innovating Stem Cell Manufacturing and Engraftment Strategies for Cell Replacement Therapy _slides",
+      "Interoception—Brain–Body Communication Controls Metabolism/Interoception—Brain–Body Communication Controls Metabolism _slides",
+      "Mechanisms Linking Adipose Health with Lipid and Glucose Homeostasis/Mechanisms Linking Adipose Health with Lipid and Glucose Homeostasis _slides"
+    ]
+  },
+  "total_folders": 28,
+  "analysis_files": {
+    "openai": "selected_slides_analysis.md",
+    "gemini": "selected_slides_analysis_gemini.md"
+  }
+}

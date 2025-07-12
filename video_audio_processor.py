@@ -848,6 +848,11 @@ class VideoAudioProcessor:
             variable=self.capture_mode_var, value="ultra"
         ).pack(side=tk.LEFT, padx=5)
         
+        tk.Radiobutton(
+            mode_frame, text="進階模式（智能分組）", 
+            variable=self.capture_mode_var, value="advanced"
+        ).pack(side=tk.LEFT, padx=5)
+        
         # 狀態顯示
         self.slide_status_var = tk.StringVar(value="準備就緒")
         status_label = tk.Label(
@@ -946,6 +951,33 @@ class VideoAudioProcessor:
                         success, result = capture_slides_from_video(
                             video_path, output_folder, threshold
                         )
+            elif capture_mode == "advanced":
+                try:
+                    # 使用進階捕獲方法（智能分組）
+                    from slide_capture_advanced import capture_slides_advanced
+                    self.root.after(0, lambda: self.slide_status_var.set(
+                        "使用進階模式，智能分組..."
+                    ))
+                    # 進階模式使用兩個閾值：相似度閾值和分組閾值
+                    group_threshold = min(threshold + 0.05, 0.95)  # 分組閾值稍高
+                    success, result = capture_slides_advanced(
+                        video_path, output_folder, threshold, group_threshold
+                    )
+                except ImportError:
+                    # 如果無法導入進階模組，回退到改進方法
+                    self.root.after(0, lambda: self.slide_status_var.set(
+                        "進階模組不可用，使用改進模式..."
+                    ))
+                    try:
+                        from improved_slide_capture import capture_slides_improved
+                        success, result = capture_slides_improved(
+                            video_path, output_folder, threshold
+                        )
+                    except ImportError:
+                        # 最終回退到標準方法
+                        success, result = capture_slides_from_video(
+                            video_path, output_folder, threshold
+                        )
             else:
                 # 使用標準捕獲方法
                 success, result = capture_slides_from_video(
@@ -966,18 +998,33 @@ class VideoAudioProcessor:
             output_folder = result.get("output_folder", "未知文件夾")
             slide_count = result.get("slide_count", 0)
             
-            self.slide_status_var.set(f"捕獲完成: {slide_count} 張幻燈片")
+            # 構建狀態消息
+            status_msg = f"捕獲完成: {slide_count} 張幻燈片"
+            
+            # 如果有分組信息（進階模式）
+            if "group_count" in result:
+                group_count = result["group_count"]
+                status_msg += f" (分為 {group_count} 組)"
+            
+            self.slide_status_var.set(status_msg)
             
             # 同時更新處理標籤頁的文件夾路徑
             self.process_folder_entry.delete(0, tk.END)
             self.process_folder_entry.insert(0, output_folder)
             
+            # 構建詳細消息
+            detail_msg = f"已成功捕獲 {slide_count} 張幻燈片到文件夾: {output_folder}\n"
+            
+            # 添加進階模式的額外信息
+            if "group_count" in result:
+                detail_msg += f"幻燈片已分為 {group_count} 組，方便後續處理\n"
+                if "metadata_file" in result:
+                    detail_msg += f"元數據已保存到: {os.path.basename(result['metadata_file'])}\n"
+            
+            detail_msg += "\n是否立即處理這些幻燈片？"
+            
             # 詢問是否切換到處理標籤頁
-            if messagebox.askyesno(
-                "成功", 
-                f"已成功捕獲 {slide_count} 張幻燈片到文件夾: {output_folder}\n"
-                f"是否立即處理這些幻燈片？"
-            ):
+            if messagebox.askyesno("成功", detail_msg):
                 self.notebook.select(2)  # 切換到處理標籤頁
         else:
             self.slide_status_var.set(f"捕獲失敗: {result}")

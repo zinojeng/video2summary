@@ -1,0 +1,28 @@
+{
+  "timestamp": "2025-07-13T00:40:28.418090",
+  "statistics": {
+    "total_slides_folders": 28,
+    "analyzed_folders": 31,
+    "coverage_percentage": 110.71,
+    "analysis_breakdown": {
+      "OpenAI精選分析": 22,
+      "Gemini精選分析": 11,
+      "OpenAI完整分析": 9,
+      "Gemini完整分析": 1
+    },
+    "special_cases": {
+      "cgm_speaker_analyses": 4,
+      "full_folder_analyses": 5
+    }
+  },
+  "analysis_files": {
+    "selected_slides_analysis.md": 22,
+    "selected_slides_analysis_gemini.md": 11,
+    "slides_analysis.md": 9,
+    "slides_analysis_gemini.md": 1
+  },
+  "summary": {
+    "openai_total": 31,
+    "gemini_total": 12
+  }
+}
