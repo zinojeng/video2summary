@@ -189,13 +189,12 @@ def capture_slides_from_video(video_path, output_folder=None, similarity_thresho
         
         # 如果未指定輸出文件夾，使用默認文件夾
         if not output_folder:
-            # 使用視頻文件名作為文件夾名
-            video_name = os.path.splitext(os.path.basename(video_path))[0]
-            output_folder = f"video_slides_{video_name}"
+            # 在視頻所在目錄創建slides文件夾
+            video_dir = os.path.dirname(video_path)
+            output_folder = os.path.join(video_dir, "slides")
         
         # 確保輸出文件夾存在
-        if not os.path.exists(output_folder):
-            os.makedirs(output_folder)
+        os.makedirs(output_folder, exist_ok=True)
             
         # 打開視頻文件
         cap = cv2.VideoCapture(video_path)
@@ -692,11 +691,32 @@ class VideoAudioProcessor:
                 
                 self.audio_output_entry.delete(0, tk.END)
                 self.audio_output_entry.insert(0, output_path)
+            
+            # 如果是幻燈片捕獲的視頻文件，自動設置輸出文件夾
+            elif entry_widget == self.slide_video_entry:
+                # 獲取視頻文件所在的目錄
+                video_dir = os.path.dirname(file_path)
+                # 在視頻所在目錄創建輸出文件夾
+                output_folder = os.path.join(video_dir, "slides")
+                
+                self.slide_output_entry.delete(0, tk.END)
+                self.slide_output_entry.insert(0, output_folder)
     
     def save_file(self, entry_widget, filetypes):
         """選擇保存文件的路徑"""
+        # 獲取當前輸入框中的路徑
+        current_path = entry_widget.get()
+        
+        # 確定初始目錄
+        if current_path:
+            initial_dir = os.path.dirname(current_path)
+            if not os.path.exists(initial_dir):
+                initial_dir = "."
+        else:
+            initial_dir = "."
+            
         file_path = filedialog.asksaveasfilename(
-            initialdir=".",
+            initialdir=initial_dir,
             title="保存文件",
             filetypes=filetypes
         )
@@ -796,26 +816,29 @@ class VideoAudioProcessor:
         
         tk.Label(threshold_frame, text="相似度閾值:").pack(side=tk.LEFT, padx=10)
         
-        self.threshold_var = tk.DoubleVar(value=0.8)
-        self.threshold_scale = ttk.Scale(
-            threshold_frame, from_=0.5, to=0.95, 
+        self.threshold_var = tk.DoubleVar(value=0.95)
+        self.threshold_scale = tk.Scale(
+            threshold_frame, from_=0.5, to=0.98, 
             variable=self.threshold_var, 
             length=200,
-            orient=tk.HORIZONTAL
+            orient=tk.HORIZONTAL,
+            resolution=0.01,
+            showvalue=False
         )
         self.threshold_scale.pack(side=tk.LEFT, padx=5)
         
         # 顯示當前閾值
+        self.threshold_value_var = tk.StringVar(value="0.95")
         self.threshold_label = tk.Label(
             threshold_frame, 
-            textvariable=tk.StringVar(value="0.80")
+            textvariable=self.threshold_value_var
         )
         self.threshold_label.pack(side=tk.LEFT, padx=5)
         
         # 更新閾值顯示
         def update_threshold_label(*args):
             value = self.threshold_var.get()
-            self.threshold_label.config(text=f"{value:.2f}")
+            self.threshold_value_var.set(f"{value:.2f}")
             
         self.threshold_var.trace_add("write", update_threshold_label)
         
@@ -876,8 +899,23 @@ class VideoAudioProcessor:
         
     def browse_slide_folder(self):
         """瀏覽並選擇幻燈片輸出文件夾"""
+        # 獲取當前輸入框中的路徑
+        current_path = self.slide_output_entry.get()
+        
+        # 如果當前有路徑，從其父目錄開始；否則使用當前工作目錄
+        if current_path:
+            # 如果路徑存在，使用它；否則使用其父目錄
+            if os.path.exists(current_path):
+                initial_dir = current_path
+            else:
+                initial_dir = os.path.dirname(current_path)
+                if not os.path.exists(initial_dir):
+                    initial_dir = "."
+        else:
+            initial_dir = "."
+            
         folder_path = filedialog.askdirectory(
-            initialdir=".",
+            initialdir=initial_dir,
             title="選擇保存幻燈片的文件夾"
         )
         if folder_path:
@@ -894,13 +932,33 @@ class VideoAudioProcessor:
             messagebox.showwarning("警告", "請選擇視頻文件")
             return
             
-        # 如果未指定輸出文件夾，根據視頻名稱創建
+        # 如果未指定輸出文件夾，在視頻所在目錄創建
         if not output_folder:
-            video_name = os.path.splitext(os.path.basename(video_path))[0]
-            output_folder = f"video_slides_{video_name}"
+            video_dir = os.path.dirname(video_path)
+            output_folder = os.path.join(video_dir, "slides")
             
             self.slide_output_entry.delete(0, tk.END)
             self.slide_output_entry.insert(0, output_folder)
+        
+        # 檢查輸出文件夾是否存在，如果不存在則詢問是否創建
+        if not os.path.exists(output_folder):
+            parent_dir = os.path.dirname(output_folder)
+            if parent_dir and not os.path.exists(parent_dir):
+                # 父目錄也不存在
+                response = messagebox.askyesno(
+                    "創建文件夾", 
+                    f"文件夾路徑不存在：\n{output_folder}\n\n是否創建此文件夾？"
+                )
+                if not response:
+                    return
+            else:
+                # 只是最後的文件夾不存在
+                response = messagebox.askyesno(
+                    "創建文件夾", 
+                    f"輸出文件夾不存在：\n{output_folder}\n\n是否創建？"
+                )
+                if not response:
+                    return
         
         # 開始捕獲（在背景線程中運行）
         self.slide_status_var.set("正在捕獲幻燈片...")

@@ -357,6 +357,9 @@ class ImprovedSlideCapture:
         """保存幻燈片並生成元數據"""
         saved_files = []
         
+        # 確保按時間排序
+        slide_frames.sort(key=lambda x: x[0])
+        
         # 查找每個幀所屬的組
         frame_to_group = {}
         for group_id, frames in self.similarity_groups.items():
@@ -367,14 +370,18 @@ class ImprovedSlideCapture:
             timestamp = frame_idx / self.fps
             phash = self.calculate_phash(frame)
             
-            # 生成文件名
+            # 轉換時間格式
+            minutes = int(timestamp / 60)
+            seconds = timestamp % 60
+            
+            # 生成文件名 - 統一格式，按時間順序
             group_id = frame_to_group.get(frame_idx, -1)
             if group_id != -1:
                 # 有相似組的情況
-                filename = f"slide_g{group_id:02d}_{idx+1:03d}_t{timestamp:.1f}s_h{phash[:8]}.jpg"
+                filename = f"slide_{idx+1:03d}_t{minutes}m{seconds:.1f}s_g{group_id:02d}_h{phash[:8]}.jpg"
             else:
                 # 獨立幻燈片
-                filename = f"slide_{idx+1:03d}_t{timestamp:.1f}s_h{phash[:8]}.jpg"
+                filename = f"slide_{idx+1:03d}_t{minutes}m{seconds:.1f}s_h{phash[:8]}.jpg"
             
             filepath = os.path.join(self.output_folder, filename)
             
@@ -393,7 +400,7 @@ class ImprovedSlideCapture:
                 'similar_frames': self.similarity_groups.get(group_id, [])
             })
             
-            print(f"保存幻燈片 {idx+1}/{len(slide_frames)}: {filename}")
+            print(f"保存幻燈片 {idx+1}/{len(slide_frames)}: {filename} (時間: {minutes}:{seconds:05.1f})")
         
         # 保存元數據文件
         metadata_path = os.path.join(self.output_folder, 'slides_metadata.json')
