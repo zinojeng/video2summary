@@ -255,8 +255,12 @@ def capture_slides_from_video(video_path, output_folder=None, similarity_thresho
                         break
                 
                 if not is_duplicate:
+                    # 轉換時間格式
+                    minutes = int(current_time / 60)
+                    seconds = current_time % 60
+                    
                     # 生成文件名
-                    filename = f"slide_{saved_count:03d}_t{current_time:.1f}s_h{phash[:8]}.jpg"
+                    filename = f"slide_{saved_count:03d}_t{minutes}m{seconds:.1f}s_h{phash[:8]}.jpg"
                     output_path = os.path.join(output_folder, filename)
                     
                     # 保存圖片

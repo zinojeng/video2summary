@@ -325,18 +325,26 @@ class AdvancedSlideCapture:
         """保存幻燈片，使用分組命名"""
         saved_files = []
         
+        # 確保按時間排序
+        slides.sort(key=lambda x: x[0])
+        
         for idx, (frame_idx, frame, slide_info) in enumerate(slides):
-            # 生成文件名：slide_g01-02_t10.5s_h1a2b3c.jpg
-            # g01-02 表示第1組第2張
+            # 更新索引為時間順序
+            slide_info.index = idx + 1
+            
+            # 轉換時間格式
             timestamp = slide_info.timestamp
+            minutes = int(timestamp / 60)
+            seconds = timestamp % 60
             phash_short = slide_info.phash[:8]
             
+            # 生成文件名：統一格式，按時間順序編號
             if slide_info.subgroup_idx > 1:
                 # 相似幻燈片使用組號-子號格式
-                filename = f"slide_g{slide_info.group_id:02d}-{slide_info.subgroup_idx:02d}_t{timestamp:.1f}s_{phash_short}.jpg"
+                filename = f"slide_{idx+1:03d}_t{minutes}m{seconds:.1f}s_g{slide_info.group_id:02d}-{slide_info.subgroup_idx:02d}_h{phash_short}.jpg"
             else:
                 # 第一張幻燈片只用組號
-                filename = f"slide_g{slide_info.group_id:02d}_t{timestamp:.1f}s_{phash_short}.jpg"
+                filename = f"slide_{idx+1:03d}_t{minutes}m{seconds:.1f}s_g{slide_info.group_id:02d}_h{phash_short}.jpg"
             
             filepath = os.path.join(self.output_folder, filename)
             slide_info.filename = filename
@@ -345,7 +353,7 @@ class AdvancedSlideCapture:
             cv2.imwrite(filepath, frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
             saved_files.append(filepath)
             
-            print(f"保存幻燈片 {idx+1}/{len(slides)}: {filename}")
+            print(f"保存幻燈片 {idx+1}/{len(slides)}: {filename} (時間: {minutes}:{seconds:05.1f})")
         
         return saved_files
     

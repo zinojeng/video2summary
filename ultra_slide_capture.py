@@ -318,34 +318,37 @@ class UltraSlideCapture:
         """保存幻燈片，包括動畫狀態"""
         saved_files = []
         
+        # 先收集所有幀並按時間排序
+        all_frames_with_info = []
         for group_idx, group in enumerate(slide_groups):
-            slide_num = group_idx + 1
+            for sub_idx, (frame_idx, frame) in enumerate(group):
+                all_frames_with_info.append((frame_idx, frame, group_idx, sub_idx, len(group)))
+        
+        # 按時間排序
+        all_frames_with_info.sort(key=lambda x: x[0])
+        
+        # 重新編號並保存
+        for idx, (frame_idx, frame, group_idx, sub_idx, group_size) in enumerate(all_frames_with_info):
+            slide_num = idx + 1
+            timestamp = frame_idx / self.fps
+            minutes = int(timestamp / 60)
+            seconds = timestamp % 60
             
-            if len(group) == 1:
+            if group_size == 1:
                 # 單一幀
-                frame_idx, frame = group[0]
-                timestamp = frame_idx / self.fps
-                filename = f"slide_{slide_num:03d}_t{timestamp:.1f}s.jpg"
-                filepath = os.path.join(self.output_folder, filename)
-                
-                cv2.imwrite(filepath, frame)
-                saved_files.append(filepath)
-                
-                print(f"保存幻燈片 {slide_num}: {filename}")
+                filename = f"slide_{slide_num:03d}_t{minutes}m{seconds:.1f}s.jpg"
             else:
                 # 動畫序列
-                print(f"幻燈片 {slide_num} 包含 {len(group)} 個動畫狀態")
-                
-                for sub_idx, (frame_idx, frame) in enumerate(group):
-                    timestamp = frame_idx / self.fps
-                    # 使用 slide_X_Y 格式命名動畫序列
-                    filename = f"slide_{slide_num:03d}_{sub_idx+1}_t{timestamp:.1f}s.jpg"
-                    filepath = os.path.join(self.output_folder, filename)
-                    
-                    cv2.imwrite(filepath, frame)
-                    saved_files.append(filepath)
-                    
-                    print(f"  保存動畫狀態 {sub_idx+1}: {filename}")
+                filename = f"slide_{slide_num:03d}_t{minutes}m{seconds:.1f}s_anim{group_idx+1}-{sub_idx+1}.jpg"
+            
+            filepath = os.path.join(self.output_folder, filename)
+            cv2.imwrite(filepath, frame)
+            saved_files.append(filepath)
+            
+            if group_size == 1:
+                print(f"保存幻燈片 {slide_num}: {filename}")
+            else:
+                print(f"保存幻燈片 {slide_num} (動畫組{group_idx+1}-{sub_idx+1}): {filename}")
         
         return saved_files
 
