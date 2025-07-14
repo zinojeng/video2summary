@@ -247,24 +247,15 @@ def process_images_to_ppt(
         # 創建新的 PowerPoint 演示文稿
         prs = Presentation()
         
+        # 設置幻燈片尺寸為 16:9
+        prs.slide_width = Inches(10)  # 16:9 寬度
+        prs.slide_height = Inches(5.625)  # 16:9 高度
+        
         # 獲取幻燈片尺寸
         slide_width = prs.slide_width
         slide_height = prs.slide_height
         
-        # 添加標題幻燈片
-        title_slide_layout = prs.slide_layouts[0]  # 標題布局
-        title_slide = prs.slides.add_slide(title_slide_layout)
-        title_slide.shapes.title.text = title
-        
-        if hasattr(title_slide.placeholders, 'subtitle'):
-            title_slide.placeholders[1].text = f"包含 {len(image_files)} 張幻燈片"
-        elif len(title_slide.placeholders) > 1:
-            for shape in title_slide.placeholders:
-                if shape.name and 'Subtitle' in shape.name:
-                    shape.text = f"包含 {len(image_files)} 張幻燈片"
-                    break
-            
-        # 為每張圖片創建一個幻燈片
+        # 為每張圖片創建一個幻燈片（不添加標題幻燈片）
         blank_slide_layout = prs.slide_layouts[6]  # 空白布局
         
         for img_path in image_files:
