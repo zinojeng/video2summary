@@ -233,15 +233,44 @@ python gpt4o_transcribe_improved.py audio.mp3 --no-convert
 
 ## Batch Processing Tools (批次處理工具)
 
+The batch processing tools are now organized in the `batch_processing/` directory with a user-friendly menu system.
+
+### Quick Start (快速開始)
+
+```bash
+# Launch the main tool menu
+./run_tools.sh
+
+# Or directly launch batch processing menu
+python batch_processing_menu.py
+```
+
+### Directory Structure (目錄結構)
+
+```
+batch_processing/
+├── slides_analysis/          # 投影片分析工具
+├── transcription_notes/      # 轉錄筆記工具  
+├── merge_tools/             # 合併工具
+├── reports/                 # 報告工具
+└── README.md               # 詳細文檔
+```
+
 ### Slides Analysis (投影片分析)
 
-1. **batch_slides_analysis.py**
+1. **batch_slide_capture.py**
+   - Batch capture slides from videos
+   - Supports recursive directory search
+   - Auto-select best slides option
+   - HTML preview generation
+
+2. **batch_slides_analysis.py**
    - Batch process slide folders for AI analysis using OpenAI GPT-4
    - Analyzes images in selected_slides folders to reduce API costs
    - Creates slides_analysis.md files with detailed content analysis
    - Supports GPT-4o-mini and GPT-4o models
 
-2. **batch_process_full_slides.py**
+3. **batch_process_full_slides.py**
    - Process folders without selected_slides subdirectories
    - Analyzes complete slides folders (limited to 30 images)
    - Handles special cases like CGM speaker presentations
@@ -259,7 +288,13 @@ python gpt4o_transcribe_improved.py audio.mp3 --no-convert
      - Automatic agenda matching (RTF/RTFD/DOCX files)
    - Output: transcription-*_detailed_notes.md
 
-2. **merge_notes_slides.py**
+2. **continue_transcription_notes.py**
+   - Continue processing remaining transcription files
+   - Checks progress and resumes from interruption
+
+### Merge Tools (合併工具)
+
+1. **merge_notes_slides.py**
    - Merges speaker notes with slide analysis
    - Creates comprehensive two-in-one notes
    - Features:
@@ -268,7 +303,17 @@ python gpt4o_transcribe_improved.py audio.mp3 --no-convert
      - Extended interpretations with __underline__
      - Avoids duplication, only adds new information
      - Clear content correspondence
-   - Output: transcription-*_merged_notes
+   - Output: transcription-*_merged_notes.md
+
+### Reports (報告工具)
+
+1. **transcription_notes_final_report.py**
+   - Generate final report for transcription processing
+   - Shows statistics and cost estimation
+
+2. **merge_notes_final_report.py**
+   - Generate final report for merged notes
+   - Lists all successfully merged conferences
 
 ### Progress Tracking
 
