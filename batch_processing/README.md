@@ -69,8 +69,8 @@ batch_processing/
 The easiest way to use these tools is through the menu system:
 
 ```bash
-# Main launcher (includes all tools)
-./run_gui.sh
+# Use the tools menu
+./run_tools.sh
 
 # Or directly access batch processing menu
 python batch_processing_menu.py

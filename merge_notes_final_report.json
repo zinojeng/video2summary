@@ -1,11 +1,13 @@
 {
-  "timestamp": "2025-07-13T02:12:10.106930",
+  "timestamp": "2025-07-21T09:12:13.015306",
   "statistics": {
     "folders_processed": 14,
-    "merged_notes_generated": 0,
+    "merged_notes_generated": 1,
     "total_tokens": 537109,
     "estimated_cost_usd": 4.03,
-    "merge_rate": 0.0
+    "merge_rate": 5.0
   },
-  "successful_merges": []
+  "successful_merges": [
+    "Aging and Thriving—Diabetes, Cognition, and Older Adults "
+  ]
 }
