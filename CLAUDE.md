@@ -15,6 +15,23 @@ This is a video and audio processing tool (視頻音頻處理工具) with a GUI 
 ### Running the Application
 ```bash
 python video_audio_processor.py
+# Or use the shortcut:
+./run_gui.sh
+```
+
+### Audio Transcription (Improved)
+```bash
+# Use improved transcription tool
+python gpt4o_transcribe_improved.py <audio_file>
+
+# Or use the shortcut script:
+./transcribe_audio.sh <audio_file> [options]
+
+# Debug audio issues
+python debug_transcription.py <audio_file>
+
+# Test transcription
+python test_improved_transcription.py <audio_file>
 ```
 
 ### Installing Dependencies
@@ -25,6 +42,10 @@ pip install moviepy opencv-python numpy pillow python-pptx scikit-image
 # Optional dependencies
 pip install markitdown>=0.1.1  # Enhanced Markdown generation
 pip install openai>=1.0.0      # AI-assisted features
+
+# For improved audio transcription
+pip install ffmpeg-python      # Optional: for programmatic ffmpeg usage
+brew install ffmpeg            # macOS: for audio format conversion
 ```
 
 ### Testing
@@ -126,6 +147,89 @@ The application checks for required dependencies on startup and offers to instal
   - Advanced mode: Intelligent grouping with perceptual hashing
 - When processing completes successfully, the app offers to switch to the next logical tab
 - The application supports both basic and AI-enhanced processing modes for generating documents from captured slides
+
+### Audio Transcription Improvements (2025-07-20)
+
+**New features to handle "Audio file might be corrupted or unsupported" errors:**
+
+1. **gpt4o_transcribe_improved.py** - Standalone improved transcription tool
+   - Auto-converts audio to compatible MP3 format (16kHz, mono, 64kbps CBR)
+   - Handles large files (>25MB) with automatic segmentation
+   - Proper filename and MIME type handling
+   - Detailed error messages with solutions
+
+2. **Automatic Format Conversion**
+   - Converts any audio format to high-compatibility MP3
+   - Uses ffmpeg with optimal parameters for OpenAI API
+   - Preserves original files
+
+3. **Large File Support**
+   - Automatically splits files larger than 25MB into 10-minute segments
+   - Processes segments and combines results
+   - Maintains transcription continuity
+   - Shows progress for each segment
+
+4. **Enhanced Error Handling**
+   - Detailed diagnostics for format issues
+   - Uses GPT-4o models (gpt-4o-transcribe, gpt-4o-mini-transcribe)
+   - Clear error messages with suggested fixes
+
+5. **Output Format Support**
+   - **Text format (.txt)**: Plain text transcription
+   - **Markdown format (.md)**: Adds header "# 語音轉錄結果"
+   - **SRT format (.srt)**: Subtitle format with timestamps
+   - Auto-adds file extensions if not specified
+   - Format-specific processing for better readability
+
+6. **Integration**
+   - video_audio_processor.py now uses improved transcription
+   - Backward compatible with existing code
+   - Falls back to original method if improved module unavailable
+
+### Common Audio Transcription Issues and Solutions
+
+1. **"Audio file might be corrupted or unsupported"**
+   - **Cause**: OpenAI API strict format requirements
+   - **Solution**: gpt4o_transcribe_improved.py auto-converts to compatible MP3 format
+
+2. **"File size exceeds 25MB limit"**
+   - **Cause**: OpenAI API file size limitation
+   - **Solution**: Automatic splitting into 10-minute segments
+
+3. **"response_format 'srt' is not compatible with model"**
+   - **Cause**: GPT-4o models only support 'text' and 'json' formats
+   - **Solution**: Gets text format and converts to SRT with timestamps
+
+4. **"'str' object has no attribute 'text'"**
+   - **Cause**: GPT-4o models return string directly, not object
+   - **Solution**: Checks response type and handles accordingly
+
+5. **Incomplete transcription appearance**
+   - **Cause**: Long paragraphs make content seem shorter
+   - **Solution**: Added double line breaks between segments for better readability
+
+### Usage Examples
+
+```bash
+# Basic transcription
+python gpt4o_transcribe_improved.py audio.mp3
+
+# Specify output format
+python gpt4o_transcribe_improved.py audio.mp3 --format text --output transcript.txt
+python gpt4o_transcribe_improved.py audio.mp3 --format markdown --output transcript.md
+python gpt4o_transcribe_improved.py audio.mp3 --format srt --output subtitles.srt
+
+# Choose model
+python gpt4o_transcribe_improved.py audio.mp3 --model gpt-4o-transcribe    # Higher quality
+python gpt4o_transcribe_improved.py audio.mp3 --model gpt-4o-mini-transcribe  # Faster
+
+# Specify language
+python gpt4o_transcribe_improved.py audio.mp3 --language zh  # Chinese
+python gpt4o_transcribe_improved.py audio.mp3 --language en  # English
+
+# Disable auto-conversion (not recommended)
+python gpt4o_transcribe_improved.py audio.mp3 --no-convert
+```
 
 ## Batch Processing Tools (批次處理工具)
 

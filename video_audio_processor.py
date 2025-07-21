@@ -672,6 +672,97 @@ class VideoAudioProcessor:
             bg="#4CAF50", fg="white", height=2, width=20
         )
         self.extract_btn.pack(pady=20)
+        
+        # 分隔線
+        separator = ttk.Separator(frame, orient='horizontal')
+        separator.pack(fill=tk.X, pady=20)
+        
+        # 音頻轉文字說明
+        transcribe_label = tk.Label(
+            frame, 
+            text="音頻轉文字功能（需要 OpenAI API Key）",
+            font=("Arial", 12, "bold")
+        )
+        transcribe_label.pack(pady=10)
+        
+        # 音頻文件選擇區域
+        audio_file_frame = tk.Frame(frame)
+        audio_file_frame.pack(fill=tk.X, pady=5)
+        
+        tk.Label(audio_file_frame, text="音頻文件:").pack(side=tk.LEFT, padx=10)
+        self.transcribe_audio_entry = tk.Entry(audio_file_frame, width=50)
+        self.transcribe_audio_entry.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        
+        self.transcribe_browse_btn = tk.Button(
+            audio_file_frame, text="瀏覽...", 
+            command=lambda: self.browse_file(
+                self.transcribe_audio_entry, 
+                filetypes=[("音頻文件", "*.mp3 *.mp4 *.mpeg *.mpga *.m4a *.wav *.webm")]
+            )
+        )
+        self.transcribe_browse_btn.pack(side=tk.LEFT, padx=5)
+        
+        # 模型選擇
+        model_frame = tk.Frame(frame)
+        model_frame.pack(fill=tk.X, pady=5)
+        
+        tk.Label(model_frame, text="模型選擇:").pack(side=tk.LEFT, padx=10)
+        
+        self.transcribe_model_var = tk.StringVar(value="gpt-4o-transcribe")
+        
+        tk.Radiobutton(
+            model_frame, text="GPT-4o", 
+            variable=self.transcribe_model_var, value="gpt-4o-transcribe"
+        ).pack(side=tk.LEFT, padx=5)
+        
+        tk.Radiobutton(
+            model_frame, text="GPT-4o-Mini", 
+            variable=self.transcribe_model_var, value="gpt-4o-mini-transcribe"
+        ).pack(side=tk.LEFT, padx=5)
+        
+        # 輸出格式選擇
+        format_frame2 = tk.Frame(frame)
+        format_frame2.pack(fill=tk.X, pady=5)
+        
+        tk.Label(format_frame2, text="輸出格式:").pack(side=tk.LEFT, padx=10)
+        
+        self.transcribe_format_var = tk.StringVar(value="text")
+        
+        tk.Radiobutton(
+            format_frame2, text="純文字 (.txt)", 
+            variable=self.transcribe_format_var, value="text"
+        ).pack(side=tk.LEFT, padx=5)
+        
+        tk.Radiobutton(
+            format_frame2, text="字幕 (.srt)", 
+            variable=self.transcribe_format_var, value="srt"
+        ).pack(side=tk.LEFT, padx=5)
+        
+        tk.Radiobutton(
+            format_frame2, text="Markdown (.md)", 
+            variable=self.transcribe_format_var, value="markdown"
+        ).pack(side=tk.LEFT, padx=5)
+        
+        # 轉錄狀態顯示
+        self.transcribe_status_var = tk.StringVar(value="準備就緒")
+        transcribe_status_label = tk.Label(
+            frame, textvariable=self.transcribe_status_var,
+            font=("Arial", 10), fg="blue"
+        )
+        transcribe_status_label.pack(pady=5)
+        
+        # 轉錄進度條
+        self.transcribe_progress = ttk.Progressbar(
+            frame, orient="horizontal", length=300, mode="indeterminate"
+        )
+        self.transcribe_progress.pack(pady=5)
+        
+        # 轉錄按鈕
+        self.transcribe_btn = tk.Button(
+            frame, text="開始轉錄", command=self.transcribe_audio,
+            bg="#2196F3", fg="white", height=2, width=20
+        )
+        self.transcribe_btn.pack(pady=10)
     
     def browse_file(self, entry_widget, filetypes):
         """瀏覽並選擇文件"""
@@ -767,6 +858,188 @@ class VideoAudioProcessor:
         else:
             self.audio_status_var.set(f"提取失敗: {result}")
             messagebox.showerror("錯誤", f"音頻提取失敗: {result}")
+    
+    def transcribe_audio(self):
+        """開始音頻轉錄"""
+        audio_path = self.transcribe_audio_entry.get()
+        
+        if not audio_path:
+            messagebox.showwarning("警告", "請選擇音頻文件")
+            return
+        
+        if not os.path.exists(audio_path):
+            messagebox.showerror("錯誤", "音頻文件不存在")
+            return
+        
+        # 檢查 API Key
+        api_key = self.saved_api_key or os.environ.get("OPENAI_API_KEY", "")
+        if not api_key:
+            # 彈出對話框要求輸入 API Key
+            dialog = tk.Toplevel(self.root)
+            dialog.title("輸入 OpenAI API Key")
+            dialog.geometry("500x150")
+            
+            tk.Label(dialog, text="請輸入您的 OpenAI API Key:").pack(pady=10)
+            api_key_entry = tk.Entry(dialog, width=60, show="*")
+            api_key_entry.pack(pady=10)
+            
+            def confirm_api_key():
+                key = api_key_entry.get().strip()
+                if key:
+                    self.saved_api_key = key
+                    dialog.destroy()
+                    self.start_transcription(audio_path)
+                else:
+                    messagebox.showwarning("警告", "請輸入有效的 API Key")
+            
+            tk.Button(dialog, text="確認", command=confirm_api_key).pack(pady=10)
+            
+            dialog.transient(self.root)
+            dialog.grab_set()
+            self.root.wait_window(dialog)
+        else:
+            self.start_transcription(audio_path)
+    
+    def start_transcription(self, audio_path):
+        """開始轉錄處理"""
+        model = self.transcribe_model_var.get()
+        output_format = self.transcribe_format_var.get()
+        
+        # 生成輸出文件名
+        base_name = os.path.splitext(audio_path)[0]
+        if output_format == "text":
+            output_path = f"{base_name}_transcription.txt"
+        elif output_format == "srt":
+            output_path = f"{base_name}_transcription.srt"
+        else:  # markdown
+            output_path = f"{base_name}_transcription.md"
+        
+        # 更新狀態
+        self.transcribe_status_var.set("正在轉錄音頻...")
+        self.transcribe_progress.start(10)
+        self.transcribe_btn.config(state=tk.DISABLED)
+        
+        def transcribe_thread():
+            try:
+                # 調用轉錄函數
+                result = self.transcribe_audio_to_text(
+                    audio_path, 
+                    self.saved_api_key,
+                    model,
+                    output_format
+                )
+                
+                # 保存結果到文件
+                with open(output_path, "w", encoding="utf-8") as f:
+                    f.write(result)
+                
+                # 在主線程中更新 UI
+                self.root.after(0, lambda: self.transcription_completed(True, output_path))
+                
+            except Exception as e:
+                error_msg = str(e)
+                self.root.after(0, lambda: self.transcription_completed(False, error_msg))
+        
+        threading.Thread(target=transcribe_thread).start()
+    
+    def transcribe_audio_to_text(self, file_path, api_key, model="gpt-4o-transcribe", output_format="text"):
+        """
+        使用 GPT-4o 模型轉錄音頻（改進版）
+        
+        Args:
+            file_path: 音頻檔案路徑
+            api_key: OpenAI API 金鑰
+            model: 模型名稱 (gpt-4o-transcribe 或 gpt-4o-mini-transcribe)
+            output_format: 輸出格式 ('text', 'srt', 'markdown')
+        
+        Returns:
+            轉錄結果文字
+        """
+        try:
+            # 首先嘗試使用改進的轉錄模組
+            try:
+                from gpt4o_transcribe_improved import AudioTranscriber
+                
+                # 使用改進的轉錄器
+                transcriber = AudioTranscriber(api_key)
+                result = transcriber.transcribe(
+                    file_path,
+                    model=model,
+                    language="zh",
+                    output_format=output_format,
+                    auto_convert=True  # 自動轉換格式以提高相容性
+                )
+                return result
+                
+            except ImportError:
+                # 如果改進模組不存在，使用原始方法
+                from openai import OpenAI
+                
+                client = OpenAI(api_key=api_key)
+                
+                # 根據格式設定 response_format
+                response_format = "text"
+                if output_format == "srt":
+                    response_format = "srt"
+                elif output_format == "markdown":
+                    response_format = "text"  # 先取得文字再轉換為 markdown
+                
+                with open(file_path, "rb") as audio_file:
+                    transcript = client.audio.transcriptions.create(
+                        model=model,
+                        file=audio_file,
+                        response_format=response_format
+                    )
+                
+                if output_format == "markdown":
+                    # 將文字轉換為 markdown 格式
+                    if hasattr(transcript, 'text'):
+                        result = f"# 語音轉錄結果\n\n{transcript.text}\n"
+                    else:
+                        result = f"# 語音轉錄結果\n\n{transcript}\n"
+                elif output_format == "srt":
+                    # SRT 格式直接回傳字串
+                    if hasattr(transcript, 'text'):
+                        result = transcript.text
+                    else:
+                        result = transcript
+                else:
+                    # 純文字格式
+                    if hasattr(transcript, 'text'):
+                        result = transcript.text
+                    else:
+                        result = transcript
+                    
+                return result
+            
+        except ImportError:
+            raise Exception("請先安裝 OpenAI 套件: pip install openai>=1.0.0")
+        except Exception as e:
+            # 如果是檔案格式錯誤，提供更詳細的說明
+            if "corrupted" in str(e) or "unsupported" in str(e):
+                raise Exception(
+                    f"GPT-4o 轉錄失敗: {str(e)}\n\n"
+                    "可能的解決方法:\n"
+                    "1. 確認音頻格式為支援的格式 (mp3, wav, m4a 等)\n"
+                    "2. 檢查檔案是否完整且未損壞\n"
+                    "3. 如果檔案太大 (>25MB)，請先分割檔案\n"
+                    "4. 嘗試使用 ffmpeg 轉換為 MP3 格式:\n"
+                    "   ffmpeg -i input.m4a -ar 16000 -ac 1 -c:a libmp3lame output.mp3"
+                )
+            else:
+                raise Exception(f"GPT-4o 轉錄失敗: {str(e)}")
+    
+    def transcription_completed(self, success, result):
+        """轉錄完成後的處理"""
+        self.transcribe_progress.stop()
+        self.transcribe_btn.config(state=tk.NORMAL)
+        
+        if success:
+            self.transcribe_status_var.set(f"轉錄完成: {result}")
+            messagebox.showinfo("成功", f"轉錄結果已保存到: {result}")
+        else:
+            self.transcribe_status_var.set(f"轉錄失敗: {result}")
+            messagebox.showerror("錯誤", f"音頻轉錄失敗: {result}")
             
     def setup_slide_ui(self):
         """設置幻燈片捕獲界面"""
