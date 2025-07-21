@@ -14,9 +14,11 @@ This is a video and audio processing tool (視頻音頻處理工具) with a GUI 
 
 ### Running the Application
 ```bash
-python video_audio_processor.py
-# Or use the shortcut:
+# Use the main launcher menu:
 ./run_gui.sh
+
+# Or run directly:
+python video_audio_processor.py
 ```
 
 ### Audio Transcription (Improved)
@@ -238,8 +240,8 @@ The batch processing tools are now organized in the `batch_processing/` director
 ### Quick Start (快速開始)
 
 ```bash
-# Launch the main tool menu
-./run_tools.sh
+# Launch the main tool menu (includes all tools)
+./run_gui.sh
 
 # Or directly launch batch processing menu
 python batch_processing_menu.py
