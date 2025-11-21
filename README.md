@@ -13,6 +13,8 @@
 - 從任何視頻格式中提取音頻
 - 支持多種輸出格式：MP3、WAV、AAC
 - 自定義輸出文件路徑和名稱
+- **批次處理支援**：可處理整個資料夾或遞迴處理所有子資料夾
+- 支援保持原始目錄結構的批次輸出
 
 ### 幻燈片捕獲
 
@@ -53,6 +55,8 @@ pip install openai
 
 ## 使用方法
 
+### GUI 界面使用
+
 運行程式：
 
 ```bash
@@ -64,6 +68,33 @@ python video_audio_processor.py
 1. **音頻提取**：選擇視頻文件、設置輸出格式和路徑，然後點擊「提取音頻」按鈕
 2. **幻燈片捕獲**：選擇視頻文件、設置輸出文件夾和相似度閾值，然後點擊「捕獲幻燈片」按鈕
 3. **幻燈片處理**：選擇包含幻燈片圖片的文件夾，選擇輸出為PowerPoint或Markdown，然後點擊「處理幻燈片」按鈕
+
+### 批次音頻提取（命令行）
+
+使用批次處理腳本可以一次處理多個視頻文件：
+
+```bash
+# 處理單個視頻文件
+./batch_audio.sh video.mp4
+
+# 處理資料夾中的所有視頻
+./batch_audio.sh /path/to/videos/
+
+# 遞迴處理所有子資料夾
+./batch_audio.sh /path/to/videos/ -r
+
+# 指定輸出格式為WAV
+./batch_audio.sh /path/to/videos/ -f wav
+
+# 指定輸出目錄並保持原始目錄結構
+./batch_audio.sh /path/to/videos/ -r -o /path/to/audio/ -k
+```
+
+或直接使用Python腳本：
+
+```bash
+python batch_audio_extraction.py /path/to/videos/ --recursive --format mp3 --output /audio/
+```
 
 ## 保存位置
 

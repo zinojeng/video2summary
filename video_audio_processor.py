@@ -16,6 +16,7 @@ from tkinter import ttk, filedialog, messagebox
 import subprocess
 import traceback
 import threading
+import shutil
 from PIL import Image, ImageTk
 import importlib
 import json
@@ -108,33 +109,57 @@ def extract_audio_from_video(video_path, output_path=None, format="mp3"):
         success: 是否成功
         output_file: 輸出文件路徑或錯誤信息
     """
+    moviepy_error = None
+
+    # 如果未指定輸出路徑，使用默認路徑
+    if not output_path:
+        base_name = os.path.splitext(video_path)[0]
+        output_path = f"{base_name}.{format}"
+
+    # 先嘗試使用 MoviePy
     try:
-        from moviepy import VideoFileClip
-        
-        # 如果未指定輸出路徑，使用默認路徑
-        if not output_path:
-            base_name = os.path.splitext(video_path)[0]
-            output_path = f"{base_name}.{format}"
-            
-        # 打開視頻文件
-        video_clip = VideoFileClip(video_path)
-        
-        # 提取音頻
-        audio_clip = video_clip.audio
-        
-        # 寫入音頻文件
-        audio_clip.write_audiofile(output_path)
-        
-        # 釋放資源
-        audio_clip.close()
-        video_clip.close()
-        
+        from moviepy.editor import VideoFileClip
+
+        with VideoFileClip(video_path) as video_clip:
+            audio_clip = video_clip.audio
+            if audio_clip is None:
+                raise ValueError("影片不含音訊軌道")
+            try:
+                audio_clip.write_audiofile(output_path)
+            finally:
+                audio_clip.close()
         return True, output_path
-        
-    except Exception as e:
-        error_msg = str(e)
-        print(f"提取音頻時出錯: {error_msg}")
-        return False, error_msg
+    except ImportError:
+        moviepy_error = "MoviePy 未安裝"
+    except Exception as exc:
+        moviepy_error = str(exc)
+
+    # MoviePy 失敗時，改用 ffmpeg 指令
+    if moviepy_error:
+        ffmpeg_path = shutil.which("ffmpeg")
+        if not ffmpeg_path:
+            return False, f"音頻提取失敗 (MoviePy): {moviepy_error}; 並且系統未找到 ffmpeg 可執行檔"
+
+        cmd = [
+            ffmpeg_path,
+            "-y",  # 覆蓋輸出
+            "-i", video_path,
+            "-vn",
+            "-ac", "1",
+            "-ar", "16000",
+            "-c:a", "libmp3lame",
+            "-b:a", "96k",
+            output_path,
+        ]
+
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode == 0:
+            return True, output_path
+
+        error_msg = result.stderr.strip() or "未知錯誤"
+        return False, f"音頻提取失敗 (MoviePy): {moviepy_error}; ffmpeg 輸出: {error_msg}"
+
+    return False, "未知錯誤"
 
 
 def calculate_phash(img, hash_size=8):
@@ -335,9 +360,12 @@ def generate_ppt_from_images(image_folder, output_file=None, title="視頻捕獲
         output_file: 輸出文件路徑或錯誤信息
     """
     try:
+        import os
+        import tempfile
         from pptx import Presentation
         from pptx.util import Inches
-        
+        from PIL import Image
+
         # 如果未指定輸出文件，使用默認文件
         if not output_file:
             output_file = os.path.join(
@@ -373,12 +401,42 @@ def generate_ppt_from_images(image_folder, output_file=None, title="視頻捕獲
         
         for img_path in image_files:
             slide = prs.slides.add_slide(blank_slide_layout)
-            
-            # 添加圖片
-            left = top = Inches(0)
-            img = slide.shapes.add_picture(
-                img_path, left, top, width=slide_width, height=slide_height
-            )
+
+            # 處理 MPO 格式圖片（Multi-Picture Object）
+            # MPO 格式不被 python-pptx 支持，需要轉換為 JPEG
+            try:
+                with Image.open(img_path) as img:
+                    if img.format == 'MPO':
+                        # 創建臨時 JPEG 文件
+                        with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as temp_file:
+                            # 轉換為 RGB（如果需要）並保存為 JPEG
+                            if img.mode != 'RGB':
+                                img = img.convert('RGB')
+                            img.save(temp_file.name, 'JPEG', quality=95)
+                            temp_img_path = temp_file.name
+
+                        # 使用臨時 JPEG 文件添加到幻燈片
+                        left = top = Inches(0)
+                        slide_img = slide.shapes.add_picture(
+                            temp_img_path, left, top, width=slide_width, height=slide_height
+                        )
+
+                        # 刪除臨時文件
+                        os.unlink(temp_img_path)
+                    else:
+                        # 非 MPO 格式，直接添加
+                        left = top = Inches(0)
+                        slide_img = slide.shapes.add_picture(
+                            img_path, left, top, width=slide_width, height=slide_height
+                        )
+            except Exception as e:
+                # 如果 PIL 處理失敗，嘗試直接添加
+                print(f"警告: 處理圖片 {img_path} 時遇到問題: {e}")
+                print("嘗試直接添加圖片...")
+                left = top = Inches(0)
+                img = slide.shapes.add_picture(
+                    img_path, left, top, width=slide_width, height=slide_height
+                )
             
         # 保存演示文稿
         prs.save(output_file)
@@ -943,77 +1001,67 @@ class VideoAudioProcessor:
         threading.Thread(target=transcribe_thread).start()
     
     def transcribe_audio_to_text(self, file_path, api_key, model="gpt-4o-transcribe", output_format="text"):
-        """
-        使用 GPT-4o 模型轉錄音頻（改進版）
-        
-        Args:
-            file_path: 音頻檔案路徑
-            api_key: OpenAI API 金鑰
-            model: 模型名稱 (gpt-4o-transcribe 或 gpt-4o-mini-transcribe)
-            output_format: 輸出格式 ('text', 'srt', 'markdown')
-        
-        Returns:
-            轉錄結果文字
-        """
+        """使用 GPT-4o 模型轉錄音訊並回傳文字。"""
         try:
-            # 首先嘗試使用改進的轉錄模組
+            # 先嘗試使用與參考專案介面一致的模組
             try:
-                from gpt4o_transcribe_improved import AudioTranscriber
-                
-                # 使用改進的轉錄器
-                transcriber = AudioTranscriber(api_key)
-                result = transcriber.transcribe(
-                    file_path,
+                from audio2text import transcribe_audio_gpt4o  # type: ignore
+            except ImportError:
+                transcribe_audio_gpt4o = None
+
+            if transcribe_audio_gpt4o:
+                return transcribe_audio_gpt4o(
+                    file_path=file_path,
+                    api_key=api_key,
                     model=model,
                     language="zh",
                     output_format=output_format,
-                    auto_convert=True  # 自動轉換格式以提高相容性
+                    request_timeout=90,
                 )
-                return result
-                
-            except ImportError:
-                # 如果改進模組不存在，使用原始方法
-                from openai import OpenAI
-                
-                client = OpenAI(api_key=api_key)
-                
-                # 根據格式設定 response_format
-                response_format = "text"
-                if output_format == "srt":
-                    response_format = "srt"
-                elif output_format == "markdown":
-                    response_format = "text"  # 先取得文字再轉換為 markdown
-                
-                with open(file_path, "rb") as audio_file:
-                    transcript = client.audio.transcriptions.create(
-                        model=model,
-                        file=audio_file,
-                        response_format=response_format
-                    )
-                
-                if output_format == "markdown":
-                    # 將文字轉換為 markdown 格式
-                    if hasattr(transcript, 'text'):
-                        result = f"# 語音轉錄結果\n\n{transcript.text}\n"
-                    else:
-                        result = f"# 語音轉錄結果\n\n{transcript}\n"
-                elif output_format == "srt":
-                    # SRT 格式直接回傳字串
-                    if hasattr(transcript, 'text'):
-                        result = transcript.text
-                    else:
-                        result = transcript
-                else:
-                    # 純文字格式
-                    if hasattr(transcript, 'text'):
-                        result = transcript.text
-                    else:
-                        result = transcript
-                    
-                return result
-            
+
+            # 若無法載入模組，退回至原本的進階轉錄器
+            from gpt4o_transcribe_improved import AudioTranscriber
+
+            transcriber = AudioTranscriber(api_key)
+            return transcriber.transcribe(
+                file_path,
+                model=model,
+                language="zh",
+                output_format=output_format,
+                auto_convert=True,
+                request_timeout=90,
+            )
+
         except ImportError:
-            raise Exception("請先安裝 OpenAI 套件: pip install openai>=1.0.0")
+            # 若相關模組缺失，最後再直接呼叫 OpenAI API
+            try:
+                from openai import OpenAI
+            except ImportError as openai_err:
+                raise Exception("請先安裝 OpenAI 套件: pip install openai>=1.0.0") from openai_err
+
+            client = OpenAI(api_key=api_key)
+
+            response_format = "text"
+            if output_format == "srt":
+                response_format = "srt"
+            elif output_format == "markdown":
+                response_format = "text"
+
+            with open(file_path, "rb") as audio_file:
+                transcript = client.audio.transcriptions.create(
+                    model=model,
+                    file=audio_file,
+                    response_format=response_format
+                )
+
+            if output_format == "markdown":
+                text_value = transcript.text if hasattr(transcript, "text") else transcript
+                return f"# 語音轉錄結果\n\n{text_value}\n"
+            if output_format == "srt":
+                return transcript.text if hasattr(transcript, "text") else transcript
+
+            return transcript.text if hasattr(transcript, "text") else transcript
+
         except Exception as e:
             # 如果是檔案格式錯誤，提供更詳細的說明
             if "corrupted" in str(e) or "unsupported" in str(e):
@@ -1026,8 +1074,7 @@ class VideoAudioProcessor:
                     "4. 嘗試使用 ffmpeg 轉換為 MP3 格式:\n"
                     "   ffmpeg -i input.m4a -ar 16000 -ac 1 -c:a libmp3lame output.mp3"
                 )
-            else:
-                raise Exception(f"GPT-4o 轉錄失敗: {str(e)}")
+            raise Exception(f"GPT-4o 轉錄失敗: {str(e)}")
     
     def transcription_completed(self, success, result):
         """轉錄完成後的處理"""

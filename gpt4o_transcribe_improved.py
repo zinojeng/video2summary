@@ -15,6 +15,7 @@ import sys
 import argparse
 import subprocess
 import tempfile
+import shutil
 from pathlib import Path
 from openai import OpenAI
 import mimetypes
@@ -25,10 +26,15 @@ class AudioTranscriber:
     """音頻轉錄處理器"""
     
     SUPPORTED_FORMATS = {'.mp3', '.mp4', '.mpeg', '.mpga', '.m4a', '.wav', '.webm'}
+    VIDEO_FORMATS = {'.mp4', '.mov', '.mkv', '.avi', '.webm'}
     MAX_FILE_SIZE = 25 * 1024 * 1024  # 25 MB
     
     def __init__(self, api_key):
         self.client = OpenAI(api_key=api_key)
+
+    def log_stage(self, message: str):
+        """輸出階段提示"""
+        print(f"[階段] {message}", flush=True)
         
     def check_audio_format(self, file_path):
         """檢查音頻格式並返回資訊"""
@@ -72,10 +78,13 @@ class AudioTranscriber:
     def convert_to_compatible_format(self, input_path, output_dir=None):
         """轉換為高相容性的 MP3 格式"""
         if output_dir is None:
-            output_dir = tempfile.gettempdir()
+            output_dir = tempfile.mkdtemp()
             
-        output_path = os.path.join(output_dir, 
-                                  Path(input_path).stem + "_converted.mp3")
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
+        output_path = os.path.join(
+            output_dir,
+            Path(input_path).stem + "_converted.mp3"
+        )
         
         print(f"正在轉換音頻格式...")
         print(f"  輸入: {input_path}")
@@ -99,52 +108,109 @@ class AudioTranscriber:
             
         print(f"✓ 轉換成功！檔案大小：{os.path.getsize(output_path):,} bytes")
         return output_path
+
+    def extract_audio_from_video(self, video_path, output_dir=None):
+        """從影片檔案提取音訊"""
+        if output_dir is None:
+            output_dir = tempfile.mkdtemp()
+
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
+        output_path = os.path.join(
+            output_dir,
+            Path(video_path).stem + "_audio.mp3"
+        )
+
+        self.log_stage("偵測到影片檔案，提取音訊軌")
+
+        cmd = [
+            "ffmpeg", "-i", video_path,
+            "-vn",
+            "-ac", "1",
+            "-ar", "16000",
+            "-c:a", "libmp3lame",
+            "-b:a", "96k",
+            "-y",
+            output_path
+        ]
+
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise Exception(f"音訊提取失敗：{result.stderr}")
+
+        self.log_stage("音訊提取完成")
+        return output_path
+
+    def get_audio_duration(self, file_path):
+        """取得音訊長度（秒）"""
+        cmd = [
+            "ffprobe", "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            file_path
+        ]
+
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode == 0 and result.stdout.strip():
+            try:
+                return float(result.stdout.strip())
+            except ValueError:
+                return None
+        return None
         
     def split_audio(self, input_path, segment_duration=600):
         """將音頻分割成小段（預設每段10分鐘）"""
-        output_dir = tempfile.mkdtemp()
+        output_dir = Path(tempfile.mkdtemp())
         segments = []
-        
-        # 獲取音頻總時長
-        cmd = ["ffprobe", "-v", "error", "-show_entries", 
-               "format=duration", "-of", "json", input_path]
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        
-        if result.returncode == 0:
-            import json
-            duration = float(json.loads(result.stdout)['format']['duration'])
+
+        duration = self.get_audio_duration(input_path)
+        if duration:
             num_segments = math.ceil(duration / segment_duration)
-            
             print(f"音頻總時長：{duration:.1f} 秒，將分割為 {num_segments} 段")
-            
-            for i in range(num_segments):
-                start_time = i * segment_duration
-                output_path = os.path.join(output_dir, f"segment_{i:03d}.mp3")
-                
-                cmd = [
-                    "ffmpeg", "-i", input_path,
-                    "-ss", str(start_time),
-                    "-t", str(segment_duration),
-                    "-ar", "16000",
-                    "-ac", "1",
-                    "-c:a", "libmp3lame",
-                    "-b:a", "64k",
-                    "-y",
-                    output_path
-                ]
-                
-                subprocess.run(cmd, capture_output=True)
-                if os.path.exists(output_path):
-                    segments.append({
-                        'path': output_path,
-                        'start': start_time,
-                        'duration': min(segment_duration, duration - start_time)
-                    })
-                    
-        return segments
+
+        ext = Path(input_path).suffix or ".mp3"
+        output_pattern = output_dir / f"segment_%03d{ext}"
+
+        cmd = [
+            "ffmpeg", "-i", input_path,
+            "-f", "segment",
+            "-segment_time", str(segment_duration),
+            "-c", "copy",
+            "-reset_timestamps", "1",
+            "-avoid_negative_ts", "1",
+            "-y",
+            str(output_pattern)
+        ]
+
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise Exception(f"音頻切割失敗：{result.stderr}")
+
+        for segment_file in sorted(output_dir.glob(f"segment_*{ext}")):
+            segment_duration_value = segment_duration
+            if duration:
+                start_index = len(segments)
+                start_time = start_index * segment_duration
+                remaining = max(duration - start_time, 0)
+                segment_duration_value = min(segment_duration, remaining)
+            else:
+                start_time = len(segments) * segment_duration
+
+            segments.append({
+                'path': str(segment_file),
+                'start': start_time,
+                'duration': segment_duration_value
+            })
+
+        return segments, str(output_dir)
         
-    def transcribe_file(self, file_path, model="gpt-4o-transcribe", 
-                       language="zh", response_format="text"):
+    def transcribe_file(
+        self,
+        file_path,
+        model="gpt-4o-transcribe",
+        language="zh",
+        response_format="text",
+        request_timeout=90,
+    ):
         """轉錄單個音頻檔案"""
         # 確保檔案有正確的副檔名
         file_name = os.path.basename(file_path)
@@ -169,50 +235,83 @@ class AudioTranscriber:
             model=model,
             file=file_like,
             language=language,
-            response_format=actual_format
+            response_format=actual_format,
+            timeout=request_timeout,
         )
             
         return transcript
         
-    def transcribe(self, audio_path, model="gpt-4o-transcribe", 
-                  language="zh", output_format="text", auto_convert=True):
+    def transcribe(
+        self,
+        audio_path,
+        model="gpt-4o-transcribe",
+        language="zh",
+        output_format="text",
+        auto_convert=True,
+        segment_duration=600,
+        request_timeout=90,
+    ):
         """主要轉錄功能，處理所有邏輯"""
-        # 檢查音頻格式
-        audio_info = self.check_audio_format(audio_path)
-        
-        print(f"\n音頻檔案資訊：")
-        print(f"  路徑: {audio_info['path']}")
-        print(f"  大小: {audio_info['size']:,} bytes ({audio_info['size']/1024/1024:.2f} MB)")
-        print(f"  格式: {audio_info['extension']}")
-        print(f"  支援: {'是' if audio_info['supported'] else '否'}")
-        print(f"  超過大小限制: {'是' if audio_info['too_large'] else '否'}")
-        
-        # 決定處理方式
+        self.log_stage("檢查音頻格式與大小")
+
         process_path = audio_path
-        temp_file = None
-        
+        temp_files = []
+        temp_dirs = []
+
         try:
-            # 如果格式不支援或需要轉換
+            ext = Path(process_path).suffix.lower()
+            if ext in self.VIDEO_FORMATS:
+                video_dir = tempfile.mkdtemp()
+                temp_dirs.append(video_dir)
+                process_path = self.extract_audio_from_video(process_path, video_dir)
+                temp_files.append(process_path)
+                ext = Path(process_path).suffix.lower()
+
+            audio_info = self.check_audio_format(process_path)
+
+            print("\n音頻檔案資訊：")
+            print(f"  原始路徑: {audio_path}")
+            print(f"  處理路徑: {process_path}")
+            print(f"  大小: {audio_info['size']:,} bytes ({audio_info['size']/1024/1024:.2f} MB)")
+            print(f"  格式: {audio_info['extension']}")
+            print(f"  支援: {'是' if audio_info['supported'] else '否'}")
+            print(f"  超過大小限制: {'是' if audio_info['too_large'] else '否'}")
+
             if not audio_info['supported'] or (auto_convert and audio_info['extension'] != '.mp3'):
-                print(f"\n需要轉換音頻格式...")
-                process_path = self.convert_to_compatible_format(audio_path)
-                temp_file = process_path
+                print("\n需要轉換音頻格式...")
+                self.log_stage("轉換為高相容性 MP3 格式")
+                convert_dir = tempfile.mkdtemp()
+                temp_dirs.append(convert_dir)
+                process_path = self.convert_to_compatible_format(process_path, convert_dir)
+                temp_files.append(process_path)
                 audio_info = self.check_audio_format(process_path)
-                
-            # 如果檔案太大，需要分段
-            if audio_info['too_large']:
-                print(f"\n檔案超過 25MB，需要分段處理...")
-                segments = self.split_audio(process_path)
-                
+
+            duration = self.get_audio_duration(process_path)
+            if duration:
+                print(f"  音訊長度: {duration:.1f} 秒 ({duration/60:.1f} 分鐘)")
+
+            needs_split = audio_info['too_large']
+            if duration and segment_duration:
+                needs_split = needs_split or duration > segment_duration
+
+            if needs_split:
+                print(f"\n檔案需要分段處理（每段 {segment_duration/60:.1f} 分鐘）...")
+                self.log_stage("音檔過大，開始分段轉錄")
+                segments, segment_dir = self.split_audio(process_path, segment_duration=segment_duration)
+                temp_dirs.append(segment_dir)
+
                 all_transcripts = []
                 for i, segment in enumerate(segments):
                     print(f"\n處理第 {i+1}/{len(segments)} 段...")
+                    self.log_stage(f"上傳第 {i+1}/{len(segments)} 段並等待回應")
                     try:
-                        # 對於分段轉錄，始終使用 text 格式
                         transcript = self.transcribe_file(
-                            segment['path'], model, language, "text"
+                            segment['path'],
+                            model,
+                            language,
+                            "text",
+                            request_timeout=request_timeout,
                         )
-                        # GPT-4o models return string directly
                         transcript_text = transcript if isinstance(transcript, str) else transcript.text
                         all_transcripts.append({
                             'text': transcript_text,
@@ -220,57 +319,61 @@ class AudioTranscriber:
                             'duration': segment['duration']
                         })
                         print(f"✓ 第 {i+1} 段轉錄成功")
+                        self.log_stage(f"第 {i+1}/{len(segments)} 段回應已取得")
                     except Exception as e:
                         print(f"✗ 第 {i+1} 段轉錄失敗: {e}")
-                    finally:
-                        # 清理分段檔案
-                        if os.path.exists(segment['path']):
-                            os.remove(segment['path'])
-                            
-                # 根據輸出格式合併結果
+
                 if output_format == "srt":
-                    # 生成 SRT 格式
                     final_text = self.generate_srt_from_segments(all_transcripts)
                 else:
-                    # 合併純文字，每段之間加入雙換行
                     final_text = "\n\n".join([seg['text'] for seg in all_transcripts])
-                
+
             else:
-                # 直接轉錄
-                print(f"\n開始轉錄...")
+                print("\n開始轉錄...")
+                self.log_stage("上傳音檔並等待模型回應")
                 transcript = self.transcribe_file(
-                    process_path, model, language, output_format
+                    process_path,
+                    model,
+                    language,
+                    output_format,
+                    request_timeout=request_timeout,
                 )
                 final_text = transcript if isinstance(transcript, str) else transcript.text
-                
-            # 格式化輸出
+                self.log_stage("模型回應已取得")
+
             if output_format == "markdown":
                 final_text = f"# 語音轉錄結果\n\n{final_text}\n"
             elif output_format == "srt" and isinstance(final_text, str) and not final_text.startswith("1\n"):
-                # 如果 API 沒有返回 SRT 格式，使用回退方法生成
                 final_text = self.generate_srt_fallback(final_text)
-                
-            # 顯示轉錄摘要
-            if not audio_info['too_large']:
+
+            self.log_stage("整理輸出內容")
+
+            if not needs_split:
                 print(f"\n轉錄完成！總字數：{len(final_text)} 字元")
             else:
-                # 對於分段轉錄，顯示更詳細的資訊
                 total_duration = sum(seg['duration'] for seg in all_transcripts if isinstance(seg, dict))
                 total_chars = len(final_text)
-                print(f"\n轉錄完成！")
+                print("\n轉錄完成！")
                 print(f"  處理時長：{total_duration:.1f} 秒 ({total_duration/60:.1f} 分鐘)")
                 print(f"  總字數：{total_chars:,} 字元")
-                print(f"  平均速度：{total_chars/total_duration*60:.0f} 字元/分鐘")
-                
+                if total_duration:
+                    print(f"  平均速度：{total_chars/total_duration*60:.0f} 字元/分鐘")
+
             return final_text
-            
+
         except Exception as e:
             raise Exception(f"轉錄失敗: {str(e)}")
-            
+
         finally:
-            # 清理臨時檔案
-            if temp_file and os.path.exists(temp_file):
-                os.remove(temp_file)
+            for tmp_file in temp_files:
+                if tmp_file and os.path.exists(tmp_file):
+                    try:
+                        os.remove(tmp_file)
+                    except OSError:
+                        pass
+            for tmp_dir in temp_dirs:
+                if tmp_dir and os.path.isdir(tmp_dir):
+                    shutil.rmtree(tmp_dir, ignore_errors=True)
                 
     def generate_srt_from_segments(self, segments):
         """從分段結果生成 SRT 格式"""
@@ -351,7 +454,7 @@ def main():
     )
     parser.add_argument("audio_file", help="音頻檔案路徑")
     parser.add_argument("--model", default="gpt-4o-transcribe",
-                       choices=["gpt-4o-transcribe", "gpt-4o-mini-transcribe"],
+                       choices=["gpt-4o-transcribe", "gpt-4o-mini-transcribe", "whisper-1"],
                        help="選擇模型")
     parser.add_argument("--language", default="zh", help="語言代碼")
     parser.add_argument("--format", default="text",
@@ -360,8 +463,16 @@ def main():
     parser.add_argument("--no-convert", action="store_true",
                        help="不自動轉換音頻格式")
     parser.add_argument("--output", help="輸出檔案路徑（預設輸出到終端）")
+    parser.add_argument("--max-segment-seconds", type=int, default=600,
+                       help="分段長度（秒），預設 600 秒 (10 分鐘)")
+    parser.add_argument("--request-timeout", type=int, default=90,
+                       help="OpenAI API 請求逾時秒數 (預設 90 秒)")
     
     args = parser.parse_args()
+
+    if args.max_segment_seconds <= 0:
+        print("錯誤：max-segment-seconds 需為正整數")
+        sys.exit(1)
     
     # 檢查 API key
     api_key = os.getenv("OPENAI_API_KEY")
@@ -384,7 +495,9 @@ def main():
             model=args.model,
             language=args.language,
             output_format=args.format,
-            auto_convert=not args.no_convert
+            auto_convert=not args.no_convert,
+            segment_duration=args.max_segment_seconds,
+            request_timeout=args.request_timeout,
         )
         
         # 輸出結果
