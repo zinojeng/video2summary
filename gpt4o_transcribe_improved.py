@@ -158,18 +158,31 @@ class AudioTranscriber:
         return None
         
     def split_audio(self, input_path, segment_duration=600):
-        """將音頻分割成小段（預設每段10分鐘）"""
-        output_dir = Path(tempfile.mkdtemp())
+        """將音頻分割成小段（預設每段10分鐘），並儲存到 persistent 資料夾"""
+        
+        # 建立 persistent output dir: {original_filename}_parts/segments
+        input_path_obj = Path(input_path)
+        base_dir = input_path_obj.parent / f"{input_path_obj.stem}_parts"
+        segments_dir = base_dir / "segments"
+        segments_dir.mkdir(parents=True, exist_ok=True)
+        
         segments = []
 
         duration = self.get_audio_duration(input_path)
         if duration:
             num_segments = math.ceil(duration / segment_duration)
             print(f"音頻總時長：{duration:.1f} 秒，將分割為 {num_segments} 段")
+            print(f"分段儲存目錄：{segments_dir}")
 
-        ext = Path(input_path).suffix or ".mp3"
-        output_pattern = output_dir / f"segment_%03d{ext}"
+        ext = input_path_obj.suffix or ".mp3"
+        # 使用一致的命名模式：segment_000.mp3
+        output_pattern = segments_dir / f"segment_%03d{ext}"
 
+        # 檢查是否已經分割過 (簡單檢查：如果 segment_000 存在)
+        # 為了更嚴謹，我們可以重新執行 ffmpeg，它會因為我們用了 -y 而覆蓋，或者我們可以檢查是否已有檔案
+        # 這裡為了確保一致性，我們還是跑一次 ffmpeg，但如果檔案已存在且大小合理，ffmpeg 可能會比較慢？
+        # 實際上 ffmpeg 分割很快 (copy codec)，所以重跑還好，能確保正確性。
+        
         cmd = [
             "ffmpeg", "-i", input_path,
             "-f", "segment",
@@ -185,8 +198,10 @@ class AudioTranscriber:
         if result.returncode != 0:
             raise Exception(f"音頻切割失敗：{result.stderr}")
 
-        for segment_file in sorted(output_dir.glob(f"segment_*{ext}")):
+        for segment_file in sorted(segments_dir.glob(f"segment_*{ext}")):
             segment_duration_value = segment_duration
+            # 計算該段的預估時長
+            # 注意：這裡只是預估，用於顯示進度，準確時長由 ffmpeg 決定
             if duration:
                 start_index = len(segments)
                 start_time = start_index * segment_duration
@@ -201,8 +216,8 @@ class AudioTranscriber:
                 'duration': segment_duration_value
             })
 
-        return segments, str(output_dir)
-        
+        return segments, str(base_dir)
+
     def transcribe_file(
         self,
         file_path,
@@ -210,6 +225,7 @@ class AudioTranscriber:
         language="zh",
         response_format="text",
         request_timeout=90,
+        prompt_context=None,
     ):
         """轉錄單個音頻檔案"""
         # 確保檔案有正確的副檔名
@@ -217,30 +233,238 @@ class AudioTranscriber:
         if not Path(file_name).suffix:
             file_name = file_name + ".mp3"
             
-        # 使用元組格式來傳遞檔案，這樣可以指定檔名
+        print(f"[Model] Using model: {model}")
+
+        # Gemini Model Handling
+        if "gemini" in model.lower():
+            import google.generativeai as genai
+            gemini_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+            if not gemini_key:
+                raise ValueError("Missing GEMINI_API_KEY or GOOGLE_API_KEY for Gemini models.")
+            
+            genai.configure(api_key=gemini_key)
+            
+            # Ensure model name starts with 'models/' for Google GenAI SDK
+            api_model_name = model
+            if not api_model_name.startswith("models/"):
+                 api_model_name = f"models/{model}"
+
+            print(f"[Gemini] Uploading file to Gemini...")
+            audio_file = genai.upload_file(file_path, mime_type="audio/mp3")
+            
+            prompt = "Generate a transcript of the speech."
+            if language:
+                # Force Traditional Chinese if zh/zh-tw is requested
+                if language.lower() in ['zh', 'zh-tw', 'zh-hk']:
+                     prompt += f" The language is Traditional Chinese (Taiwan). Please output in Traditional Chinese (繁體中文)."
+                else:
+                     prompt += f" The language is {language}."
+            
+            if prompt_context:
+                prompt += f"\n\nPrevious Context (for continuity, do not repeat): {prompt_context}"
+
+            print(f"[Gemini] Generating content...")
+            gemini_model = genai.GenerativeModel(api_model_name)
+            
+            # Retry logic for Gemini
+            max_retries = 3
+            import time
+            
+            for attempt in range(max_retries):
+                try:
+                    # Use explicit timeout if possible, though genai SDK uses request_options in recent versions
+                    # We pass request_timeout to request_options if supported, otherwise it relies on default
+                    response = gemini_model.generate_content(
+                        [prompt, audio_file],
+                        request_options={'timeout': request_timeout} 
+                    )
+                    return response.text
+                except Exception as e:
+                    print(f"⚠️  Gemini Error (Attempt {attempt+1}/{max_retries}): {e}")
+                    if attempt < max_retries - 1:
+                        wait_time = (attempt + 1) * 5
+                        print(f"   Waiting {wait_time}s before retry...")
+                        time.sleep(wait_time)
+                    else:
+                        raise e
+
+        # OpenAI Handling (Default)
         with open(file_path, "rb") as f:
-            # 讀取檔案內容
             file_content = f.read()
             
-        # 創建類似檔案的物件並設定名稱
         import io
         file_like = io.BytesIO(file_content)
-        file_like.name = file_name  # BytesIO 允許設定 name 屬性
+        file_like.name = file_name
         
-        # GPT-4o models only support 'text' and 'json' formats
-        # For SRT, we'll get text and convert it later
         actual_format = "text"
         
-        transcript = self.client.audio.transcriptions.create(
-            model=model,
-            file=file_like,
-            language=language,
-            response_format=actual_format,
-            timeout=request_timeout,
-        )
+        # Note: OpenAI 'transcriptions' endpoint does not support system prompt for style.
+        # It blindly transcribes what it hears.
+        # If the audio is Mandarin, it might output Simplified.
+        # We rely on the `translate` feature explicitly properly converting it later.
+        
+        # Prepare arguments
+        kwargs = {
+            "model": model,
+            "file": file_like,
+            "language": language, 
+            "response_format": "verbose_json", # Use verbose_json to get timestamps
+            "timeout": request_timeout,
+        }
+        
+        if prompt_context:
+            kwargs["prompt"] = prompt_context
+
+        transcript = self.client.audio.transcriptions.create(**kwargs)
             
         return transcript
+
+    def translate_text(self, text, target_lang, model="gpt-4o"):
+        """翻譯文字"""
+        if not text or not text.strip():
+            return ""
+            
+        lang_name_map = {
+            "zh-tw": "Traditional Chinese (Taiwan)",
+            "en": "English",
+            "zh": "Traditional Chinese",
+            "ja": "Japanese"
+        }
+        target_lang_name = lang_name_map.get(target_lang.lower(), target_lang)
         
+        system_prompt = f"You are a professional translator. Translate the following text into natural, fluent {target_lang_name}. Maintain the original meaning and tone."
+        user_prompt = f"{text}"
+
+        print(f"[Translation] Translating to {target_lang_name}...")
+
+        # Gemini
+        if "gemini" in model.lower():
+            import google.generativeai as genai
+            try:
+                # Reuse Gemini configuration logic or check if configured
+                gemini_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+                if gemini_key:
+                     genai.configure(api_key=gemini_key)
+                
+                # Use a specific text model for translation if needed, or the same model
+                # For safety, use a known text model or the same one passed in (if text-capable)
+                # Let's try to use the model passed in, but strip 'transcribe' if present or use a sturdy one
+                # Actually, gemini-1.5-flash is good for this.
+                trans_model_name = "models/gemini-1.5-flash"
+                if "gemini" in model:
+                     trans_model_name = model if model.startswith("models/") else f"models/{model}"
+
+                gemini_model = genai.GenerativeModel(trans_model_name)
+                response = gemini_model.generate_content(f"{system_prompt}\n\nText:\n{user_prompt}")
+                return response.text.strip()
+            except Exception as e:
+                print(f"Gemini Translation Error: {e}")
+                return text # Fallback to original
+
+        # OpenAI
+        try:
+            # Use gpt-4o for high quality translation
+            trans_model = "gpt-4o"
+            response = self.client.chat.completions.create(
+                model=trans_model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0.3
+            )
+            return response.choices[0].message.content.strip()
+        except Exception as e:
+            return response.choices[0].message.content.strip()
+        except Exception as e:
+            print(f"OpenAI Translation Error: {e}")
+            return text 
+
+    def translate_segments_batch(self, segments, target_lang, model="gpt-4o"):
+        """
+        批次翻譯 segments 列表，保持時間軸對應。
+        Input segments: [{'start': 1.0, 'end': 2.0, 'text': 'Hello'}, ...]
+        Output segments: [{'start': 1.0, 'end': 2.0, 'text': '你好'}, ...]
+        """
+        if not segments:
+            return []
+
+        lang_name_map = {
+            "zh-tw": "Traditional Chinese (Taiwan)",
+            "en": "English",
+            "zh": "Traditional Chinese",
+            "ja": "Japanese"
+        }
+        target_lang_name = lang_name_map.get(target_lang.lower(), target_lang)
+
+        # Extract texts
+        texts = [seg['text'].replace('\n', ' ') for seg in segments]
+        
+        # We need to process in chunks if too many segments, but gpt-4o can handle large context.
+        # Let's try to do it in one go for small/medium files, or chunks of 50 lines.
+        # For reliability, chunk size = 30
+        CHUNK_SIZE = 30
+        translated_texts = []
+        
+        for i in range(0, len(texts), CHUNK_SIZE):
+            chunk = texts[i:i + CHUNK_SIZE]
+            
+            # Format as numbered list to ensure alignment
+            prompt_text = "\n".join([f"{idx}. {text}" for idx, text in enumerate(chunk)])
+            
+            system_prompt = f"""You are a professional subtitle translator. Translate the following lines into natural, fluent {target_lang_name}.
+Rules:
+1. Maintain the exact same number of lines.
+2. Maintain the exact same line numbers/IDs.
+3. specific medical/technical terms should be translated accurately.
+4. Output format: Number. Translated Text (e.g. "0. 你好")
+5. Do NOT merge lines. One input line = One output line.
+"""
+            
+            user_prompt = f"Lines to translate:\n{prompt_text}"
+            
+            try:
+                # Use translate_text logic (or call API directly)
+                # We can reuse client.chat.completions
+                response = self.client.chat.completions.create(
+                    model="gpt-4o", # Force high quality model for detailed task
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt}
+                    ],
+                    temperature=0.3
+                )
+                result = response.choices[0].message.content.strip()
+                
+                # Parse result
+                lines = result.split('\n')
+                chunk_map = {}
+                for line in lines:
+                    # Match "0. Text" or "0.Text"
+                    import re
+                    match = re.match(r"(\d+)\.\s*(.*)", line)
+                    if match:
+                        idx = int(match.group(1))
+                        content = match.group(2)
+                        chunk_map[idx] = content
+                
+                # Fill translated_texts based on index
+                for j in range(len(chunk)):
+                    translated_texts.append(chunk_map.get(j, chunk[j])) # Fallback to original if missing
+                    
+            except Exception as e:
+                print(f"Batch Translation Error (Chunk {i}): {e}")
+                translated_texts.extend(chunk) # Fallback
+
+        # Re-assemble segments
+        translated_segments = []
+        for i, seg in enumerate(segments):
+            new_seg = seg.copy()
+            new_seg['text'] = translated_texts[i] if i < len(translated_texts) else seg['text']
+            translated_segments.append(new_seg)
+            
+        return translated_segments
+
     def transcribe(
         self,
         audio_path,
@@ -250,13 +474,20 @@ class AudioTranscriber:
         auto_convert=True,
         segment_duration=600,
         request_timeout=90,
+        translate_langs=None, 
+        cleanup=False,
     ):
         """主要轉錄功能，處理所有邏輯"""
         self.log_stage("檢查音頻格式與大小")
 
         process_path = audio_path
-        temp_files = []
-        temp_dirs = []
+        temp_files = [] 
+        temp_dirs = []  
+        
+        parts_dir = None
+        
+        if translate_langs is None:
+            translate_langs = []
 
         try:
             ext = Path(process_path).suffix.lower()
@@ -294,72 +525,298 @@ class AudioTranscriber:
             if duration and segment_duration:
                 needs_split = needs_split or duration > segment_duration
 
+            final_text_map = {'original': ""}
+            for lang in translate_langs:
+                final_text_map[lang] = ""
+
             if needs_split:
                 print(f"\n檔案需要分段處理（每段 {segment_duration/60:.1f} 分鐘）...")
                 self.log_stage("音檔過大，開始分段轉錄")
-                segments, segment_dir = self.split_audio(process_path, segment_duration=segment_duration)
-                temp_dirs.append(segment_dir)
+                
+                # 使用 persistent splitting
+                segments, parts_dir = self.split_audio(process_path, segment_duration=segment_duration)
+                
+                # 建立 transcripts 目錄
+                transcripts_dir = Path(parts_dir) / "transcripts"
+                transcripts_dir.mkdir(parents=True, exist_ok=True)
 
-                all_transcripts = []
+                all_transcripts = [] # List of dicts: {'original': text, 'en': text...}
+                
+                # Context passing variable
+                last_transcript_tail = None
+                
                 for i, segment in enumerate(segments):
+                    segment_path = Path(segment['path'])
+                    segment_name = segment_path.stem # e.g. segment_000
+                    
+                    # Original Transcript File
+                    transcript_file = transcripts_dir / f"{segment_name}.txt"
+                    transcript_json_file = transcripts_dir / f"{segment_name}.json"
+                    
                     print(f"\n處理第 {i+1}/{len(segments)} 段...")
-                    self.log_stage(f"上傳第 {i+1}/{len(segments)} 段並等待回應")
-                    try:
-                        transcript = self.transcribe_file(
-                            segment['path'],
-                            model,
-                            language,
-                            "text",
-                            request_timeout=request_timeout,
-                        )
-                        transcript_text = transcript if isinstance(transcript, str) else transcript.text
-                        all_transcripts.append({
-                            'text': transcript_text,
-                            'start': segment['start'],
-                            'duration': segment['duration']
-                        })
-                        print(f"✓ 第 {i+1} 段轉錄成功")
-                        self.log_stage(f"第 {i+1}/{len(segments)} 段回應已取得")
-                    except Exception as e:
-                        print(f"✗ 第 {i+1} 段轉錄失敗: {e}")
+                    
+                    segment_data = {
+                        'start': segment['start'],
+                        'duration': segment['duration'],
+                        'text': "",
+                        'segments': [] # Store detailed segments with timestamps
+                    }
+                    
+                    # 1. Get Original Transcript (Load or Transcribe)
+                    msg_prefix = f"第 {i+1}/{len(segments)} 段"
+                    
+                    if transcript_json_file.exists() and transcript_json_file.stat().st_size > 0:
+                        print(f"✓ [{msg_prefix}] 發現已存檔原文(JSON)，跳過轉錄")
+                        import json
+                        with open(transcript_json_file, "r", encoding="utf-8") as f:
+                            saved_data = json.load(f)
+                            segment_data['text'] = saved_data.get('text', "")
+                            segment_data['segments'] = saved_data.get('segments', [])
+                    elif transcript_file.exists() and transcript_file.stat().st_size > 0:
+                         # Legacy fallback
+                        print(f"✓ [{msg_prefix}] 發現已存檔原文(Text)，跳過轉錄")
+                        with open(transcript_file, "r", encoding="utf-8") as f:
+                            segment_data['text'] = f.read()
+                    else:
+                        self.log_stage(f"{msg_prefix} 上傳並轉錄")
+                        try:
+                            # Pass context if available
+                            transcript = self.transcribe_file(
+                                segment['path'],
+                                model,
+                                language,
+                                "text",
+                                request_timeout=request_timeout,
+                                prompt_context=last_transcript_tail
+                            )
+                            
+                            transcript_text = ""
+                            detailed_segments = []
+                            
+                            if hasattr(transcript, 'text'):
+                                transcript_text = transcript.text
+                            elif isinstance(transcript, dict):
+                                transcript_text = transcript.get('text', "")
+                            else:
+                                transcript_text = str(transcript)
+                                
+                            # Extract detailed segments if available (OpenAI verbose_json)
+                            if hasattr(transcript, 'segments'):
+                                detailed_segments = transcript.segments
+                            elif isinstance(transcript, dict) and 'segments' in transcript:
+                                detailed_segments = transcript['segments']
+                            
+                            # Save text transcript
+                            with open(transcript_file, "w", encoding="utf-8") as f:
+                                f.write(transcript_text)
+                                
+                            # Save JSON transcript (with timestamps)
+                            import json
+                            with open(transcript_json_file, "w", encoding="utf-8") as f:
+                                json.dump({
+                                    'text': transcript_text,
+                                    'segments': detailed_segments
+                                }, f, ensure_ascii=False)
+                                
+                            print(f"✓ [{msg_prefix}] 轉錄已儲存")
+                            segment_data['text'] = transcript_text
+                            segment_data['segments'] = detailed_segments
+                            
+                        except Exception as e:
+                            print(f"✗ [{msg_prefix}] 轉錄失敗: {e}")
+                            raise e
 
-                if output_format == "srt":
-                    final_text = self.generate_srt_from_segments(all_transcripts)
-                else:
-                    final_text = "\n\n".join([seg['text'] for seg in all_transcripts])
+                    # Update context for next segment
+                    # Keep last ~200 chars to avoid token limits but provide continuity
+                    if segment_data['text']:
+                        current_text = segment_data['text'].strip()
+                        last_transcript_tail = current_text[-200:] if len(current_text) > 200 else current_text
 
+                    # 2. Translate (Load or Translate)
+                    for lang in translate_langs:
+                        trans_file = transcripts_dir / f"{segment_name}_{lang}.txt"
+                        if trans_file.exists() and trans_file.stat().st_size > 0:
+                            print(f"✓ [{msg_prefix}] 發現已存檔翻譯 ({lang})")
+                            with open(trans_file, "r", encoding="utf-8") as f:
+                                segment_data[lang] = f.read()
+                        else:
+                            # Only translate if we have original text
+                            if segment_data['text']:
+                                print(f"→ [{msg_prefix}] 翻譯中 ({lang})...")
+                                trans_text = self.translate_text(segment_data['text'], lang, model)
+                                with open(trans_file, "w", encoding="utf-8") as f:
+                                    f.write(trans_text)
+                                segment_data[lang] = trans_text
+
+                    all_transcripts.append(segment_data)
+
+                # Merge Logic for all keys
+                # We need to handle this per language
+                keys_to_merge = ['original'] + translate_langs
+                
+                # Helper to extract text for a specific key from structure
+                # segment_data structure: {'text': orig, 'en': en_text, 'zh-tw': ...}
+                # So key 'original' maps to 'text', others map to themselves
+                
+                merged_results = {} # language -> final string
+
+                for key in keys_to_merge:
+                    data_key = 'text' if key == 'original' else key
+                    
+                    if output_format == "srt":
+                        # Try to build precise SRT
+                        precise_segments = []
+                        has_detailed = False
+                        
+                        # Collect all DETAILED segments from original
+                        for seg in all_transcripts:
+                            offset = seg['start']
+                            # We MUST use original segments as source of truth for timing
+                            if 'segments' in seg and seg['segments']:
+                                has_detailed = True
+                                for detailed in seg['segments']:
+                                    d_start = detailed['start'] if isinstance(detailed, dict) else detailed.start
+                                    d_end = detailed['end'] if isinstance(detailed, dict) else detailed.end
+                                    d_text = detailed['text'] if isinstance(detailed, dict) else detailed.text
+                                    
+                                    precise_segments.append({
+                                        'start': offset + d_start,
+                                        'end': offset + d_end,
+                                        'text': d_text
+                                    })
+                        
+                        if has_detailed:
+                             if key == 'original':
+                                 merged_results[key] = self.generate_srt_from_precise(precise_segments)
+                             else:
+                                 # High-Precision Translation
+                                 print(f"[Precision] Aligning and translating segments for {key}...")
+                                 translated_segments = self.translate_segments_batch(precise_segments, key, model)
+                                 merged_results[key] = self.generate_srt_from_precise(translated_segments)
+                                 
+                             continue
+
+                    # Fallback or Translation (if no detailed segments or format != srt)
+                    # Extract list of {text, start, duration} for this specific language
+                    lang_segments = []
+                    for seg in all_transcripts:
+                        if data_key in seg:
+                            lang_segments.append({
+                                'text': seg[data_key],
+                                'start': seg['start'],
+                                'duration': seg['duration']
+                            })
+                    
+                    if output_format == "srt":
+                        merged_results[key] = self.generate_srt_from_segments(lang_segments)
+                    else:
+                         merged_results[key] = "\n\n".join([s['text'] for s in lang_segments])
+
+                # Assign to final_text (original) and return full map if needed?
+                # The method returns final_text, but now we have multiple.
+                # We will write files inside this method if they are extra langs, 
+                # OR return a dict. But existing caller expects a string.
+                # Let's write EXTRA files here and return ORIGINAL string.
+                
+                final_text = merged_results['original'] # For return
+                
+                final_text_map = merged_results
+                
             else:
+                # No Split
                 print("\n開始轉錄...")
                 self.log_stage("上傳音檔並等待模型回應")
+                
+                # If SRT, request precise
+                resp_format = "verbose_json" if output_format == "srt" else "text"
+                
                 transcript = self.transcribe_file(
                     process_path,
                     model,
                     language,
-                    output_format,
+                    resp_format, # Use corrected output format
                     request_timeout=request_timeout,
                 )
-                final_text = transcript if isinstance(transcript, str) else transcript.text
+                
+                final_text = ""
+                
+                if hasattr(transcript, 'text'):
+                     final_text = transcript.text
+                elif isinstance(transcript, dict):
+                     final_text = transcript.get('text', "")
+                else:
+                     final_text = str(transcript)
+                
                 self.log_stage("模型回應已取得")
+                
+                final_text_map['original'] = final_text
+                
+                # Check for precise segments availability
+                precise_segments = []
+                if output_format == "srt":
+                    # Check if we got detailed segments
+                    detailed_segments = []
+                    if hasattr(transcript, 'segments'):
+                        detailed_segments = transcript.segments
+                    elif isinstance(transcript, dict) and 'segments' in transcript:
+                        detailed_segments = transcript['segments']
+                    
+                    if detailed_segments:
+                         # Convert to standard format
+                         for ds in detailed_segments:
+                             d_start = ds['start'] if isinstance(ds, dict) else ds.start
+                             d_end = ds['end'] if isinstance(ds, dict) else ds.end
+                             d_text = ds['text'] if isinstance(ds, dict) else ds.text
+                             precise_segments.append({'start': d_start, 'end': d_end, 'text': d_text})
+                         
+                         final_text_map['original'] = self.generate_srt_from_precise(precise_segments)
 
-            if output_format == "markdown":
-                final_text = f"# 語音轉錄結果\n\n{final_text}\n"
-            elif output_format == "srt" and isinstance(final_text, str) and not final_text.startswith("1\n"):
-                final_text = self.generate_srt_fallback(final_text)
+                # Translate 
+                for lang in translate_langs:
+                     if precise_segments and output_format == "srt":
+                         # Use high precision batch translation
+                         print(f"[Precision] Aligning and translating segments for {lang}...")
+                         trans_segs = self.translate_segments_batch(precise_segments, lang, model)
+                         final_text_map[lang] = self.generate_srt_from_precise(trans_segs)
+                     else:
+                         # Fallback text translation
+                         final_text_map[lang] = self.translate_text(final_text, lang, model)
+
+            # Post-Process (Markdown/SRT Fallback) for ALL languages
+            for key in final_text_map:
+                txt = final_text_map[key]
+                # If key is original and we already generated SRT (list/str), skip processing if it looks like SRT
+                if output_format == "srt" and (txt.startswith("1\n") or "-->" in txt[:50]):
+                     continue
+
+                if output_format == "markdown":
+                     # Add header ?
+                     final_text_map[key] = f"# 語音轉錄結果 ({key})\n\n{txt}\n"
+                elif output_format == "srt":
+                     # If it's single chunk and API gave text, convert to SRT fallback
+                     if isinstance(txt, str) and not txt.strip() == "":
+                         final_text_map[key] = self.generate_srt_fallback(txt)
 
             self.log_stage("整理輸出內容")
 
             if not needs_split:
-                print(f"\n轉錄完成！總字數：{len(final_text)} 字元")
+                 print(f"\n轉錄完成！總字數：{len(final_text_map['original'])} 字元")
             else:
                 total_duration = sum(seg['duration'] for seg in all_transcripts if isinstance(seg, dict))
-                total_chars = len(final_text)
                 print("\n轉錄完成！")
                 print(f"  處理時長：{total_duration:.1f} 秒 ({total_duration/60:.1f} 分鐘)")
-                print(f"  總字數：{total_chars:,} 字元")
-                if total_duration:
-                    print(f"  平均速度：{total_chars/total_duration*60:.0f} 字元/分鐘")
+                if parts_dir:
+                     if cleanup:
+                         print(f"  正在清理暫存檔案：{parts_dir}")
+                         try:
+                             shutil.rmtree(parts_dir)
+                             print("  ✓ 暫存檔案已清理")
+                         except Exception as e:
+                             print(f"  ⚠️ 清理失敗: {e}")
+                     else:
+                         print(f"  暫存檔案保留於：{parts_dir}")
 
-            return final_text
+            return final_text_map
 
         except Exception as e:
             raise Exception(f"轉錄失敗: {str(e)}")
@@ -371,10 +828,25 @@ class AudioTranscriber:
                         os.remove(tmp_file)
                     except OSError:
                         pass
-            for tmp_dir in temp_dirs:
-                if tmp_dir and os.path.isdir(tmp_dir):
-                    shutil.rmtree(tmp_dir, ignore_errors=True)
+            # We explicitly DO NOT remove parts_dir here to support inspection and resume.
+            # User can manually delete it if they want.
+
                 
+    def generate_srt_from_precise(self, segments):
+        """從精確的 segment 資訊 (start, end, text) 生成 SRT"""
+        srt_content = []
+        for i, segment in enumerate(segments):
+            start_srt = self.format_srt_time(segment['start'])
+            end_srt = self.format_srt_time(segment['end'])
+            text = segment['text'].strip()
+            
+            srt_content.append(f"{i+1}")
+            srt_content.append(f"{start_srt} --> {end_srt}")
+            srt_content.append(text)
+            srt_content.append("")
+            
+        return "\n".join(srt_content)
+
     def generate_srt_from_segments(self, segments):
         """從分段結果生成 SRT 格式"""
         srt_content = []
@@ -454,8 +926,7 @@ def main():
     )
     parser.add_argument("audio_file", help="音頻檔案路徑")
     parser.add_argument("--model", default="gpt-4o-transcribe",
-                       choices=["gpt-4o-transcribe", "gpt-4o-mini-transcribe", "whisper-1"],
-                       help="選擇模型")
+                       help="選擇模型 (例如 gpt-4o-mini-transcribe, gemini-2.0-flash-exp)")
     parser.add_argument("--language", default="zh", help="語言代碼")
     parser.add_argument("--format", default="text",
                        choices=["text", "markdown", "srt"],
@@ -467,18 +938,32 @@ def main():
                        help="分段長度（秒），預設 600 秒 (10 分鐘)")
     parser.add_argument("--request-timeout", type=int, default=90,
                        help="OpenAI API 請求逾時秒數 (預設 90 秒)")
+    parser.add_argument("--translate", help="翻譯語言，用逗號分隔 (例如: en,zh-tw)")
+    parser.add_argument("--cleanup", action="store_true", help="完成後清理暫存檔案")
     
     args = parser.parse_args()
 
     if args.max_segment_seconds <= 0:
         print("錯誤：max-segment-seconds 需為正整數")
         sys.exit(1)
+        
+    translate_langs = []
+    if args.translate:
+        translate_langs = [l.strip() for l in args.translate.split(',') if l.strip()]
+        print(f"啟用翻譯模式：{translate_langs}")
     
     # 檢查 API key
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        print("錯誤：請設定環境變數 OPENAI_API_KEY")
-        sys.exit(1)
+    if "gemini" not in args.model.lower():
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            print("錯誤：使用 OpenAI 模型請設定環境變數 OPENAI_API_KEY")
+            sys.exit(1)
+    else:
+        # Check Gemini Key
+        if not (os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")):
+             print("錯誤：使用 Gemini 模型請設定環境變數 GEMINI_API_KEY 或 GOOGLE_API_KEY")
+             sys.exit(1)
+        api_key = "dummy" # Placeholder to satisfy __init__
         
     # 檢查 ffmpeg
     try:
@@ -490,7 +975,7 @@ def main():
     # 執行轉錄
     try:
         transcriber = AudioTranscriber(api_key)
-        result = transcriber.transcribe(
+        final_result_map = transcriber.transcribe(
             args.audio_file,
             model=args.model,
             language=args.language,
@@ -498,31 +983,75 @@ def main():
             auto_convert=not args.no_convert,
             segment_duration=args.max_segment_seconds,
             request_timeout=args.request_timeout,
+            translate_langs=translate_langs,
+            cleanup=args.cleanup
         )
         
-        # 輸出結果
-        if args.output:
-            # 如果沒有指定副檔名，根據格式自動添加
-            output_path = args.output
-            if not Path(output_path).suffix:
-                ext_map = {
-                    "text": ".txt",
-                    "markdown": ".md",
-                    "srt": ".srt"
-                }
-                output_path = output_path + ext_map.get(args.format, ".txt")
-            
-            with open(output_path, "w", encoding="utf-8") as f:
-                f.write(result)
-            print(f"\n✓ 轉錄結果已儲存到：{output_path}")
-        else:
-            print("\n" + "="*60)
-            print("轉錄結果：")
-            print("="*60)
-            print(result)
+        # 處理輸出
+        # final_result_map 是一個字典: {'original': ..., 'en': ..., 'zh-tw': ...}
+        # 如果 output_format 是字串 (舊行為)，它是 original
+        
+        if isinstance(final_result_map, str):
+            # Backward compatibility (should not happen with new code but safe guard)
+            final_result_map = {'original': final_result_map}
+
+        # 決定基礎輸出檔案路徑
+        base_output_path = args.output
+        
+        # 如果沒指定 output，使用 stdout (僅輸出 original)
+        if not base_output_path:
+             print("\n" + "="*60)
+             print("轉錄結果 (Original)：")
+             print("="*60)
+             print(final_result_map['original'])
+             
+             for lang in translate_langs:
+                 if lang in final_result_map:
+                     print(f"\n" + "="*60)
+                     print(f"轉錄結果 ({lang})：")
+                     print("="*60)
+                     print(final_result_map[lang])
+             return
+
+        # 有指定 output，處理各語言檔案
+        output_path_obj = Path(base_output_path)
+        # 如果有副檔名，先分離
+        # e.g. /path/to/myvideo.txt -> stem=myvideo, suffix=.txt
+        #      /path/to/myvideo -> stem=myvideo, suffix=""
+        
+        stem = output_path_obj.stem
+        parent = output_path_obj.parent
+        # 如果使用者透過 args.output 傳入完整檔名 (e.g. out.srt)，我們就用這個當 original
+        # 翻譯版則插入語言代碼: out_en.srt
+        
+        # 根據 format 決定副檔名 (如果使用者沒給)
+        suffix = output_path_obj.suffix
+        if not suffix:
+             ext_map = {
+                "text": ".txt",
+                "markdown": ".md",
+                "srt": ".srt"
+             }
+             suffix = ext_map.get(args.format, ".txt")
+        
+        for key, text in final_result_map.items():
+            if not text:
+                continue
+                
+            if key == 'original':
+                final_path = parent / f"{stem}{suffix}"
+            else:
+                final_path = parent / f"{stem}_{key}{suffix}"
+                
+            with open(final_path, "w", encoding="utf-8") as f:
+                f.write(text)
+            print(f"✓ [{key}] 結果已儲存到：{final_path}")
             
     except Exception as e:
         print(f"\n錯誤：{e}")
+        # Print traceback for easier debugging
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
 
 
