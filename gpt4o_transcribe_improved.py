@@ -18,17 +18,18 @@ import tempfile
 import shutil
 from pathlib import Path
 from openai import OpenAI
-import mimetypes
 import math
 
 
 class AudioTranscriber:
     """音頻轉錄處理器"""
-    
+
     SUPPORTED_FORMATS = {'.mp3', '.mp4', '.mpeg', '.mpga', '.m4a', '.wav', '.webm'}
+    # 高相容性格式：這些格式不需要轉換，OpenAI API 直接支援
+    HIGH_COMPAT_FORMATS = {'.mp3', '.m4a', '.wav'}
     VIDEO_FORMATS = {'.mp4', '.mov', '.mkv', '.avi', '.webm'}
     MAX_FILE_SIZE = 25 * 1024 * 1024  # 25 MB
-    
+
     def __init__(self, api_key):
         self.client = OpenAI(api_key=api_key)
 
@@ -156,7 +157,65 @@ class AudioTranscriber:
             except ValueError:
                 return None
         return None
-        
+
+    def detect_repetition(self, text: str, min_phrase_len: int = 15, max_repeat: int = 3) -> dict:
+        """偵測轉錄文字中的重複迴圈 (Whisper repetition loop bug)
+
+        Returns:
+            dict with keys:
+                'has_repetition': bool
+                'clean_text': str (截斷重複後的乾淨文字)
+                'repeat_ratio': float (重複佔全文比例)
+                'repeated_phrase': str (被重複的片段)
+        """
+        if not text or len(text) < min_phrase_len * max_repeat:
+            return {'has_repetition': False, 'clean_text': text, 'repeat_ratio': 0.0, 'repeated_phrase': ''}
+
+        # 方法 1: 尋找連續重複的子字串
+        best_match = {'phrase': '', 'count': 0, 'start': 0}
+
+        # 嘗試不同長度的 phrase (從長到短)
+        for phrase_len in range(min(80, len(text) // 3), min_phrase_len - 1, -1):
+            for start in range(0, len(text) - phrase_len * 2):
+                phrase = text[start:start + phrase_len]
+                if not phrase.strip():
+                    continue
+
+                # 計算連續重複次數
+                count = 1
+                pos = start + phrase_len
+                while pos + phrase_len <= len(text):
+                    if text[pos:pos + phrase_len] == phrase:
+                        count += 1
+                        pos += phrase_len
+                    else:
+                        break
+
+                if count >= max_repeat and count > best_match['count']:
+                    best_match = {'phrase': phrase, 'count': count, 'start': start}
+
+            # 找到足夠多重複就停止
+            if best_match['count'] >= max_repeat:
+                break
+
+        if best_match['count'] >= max_repeat:
+            repeat_len = best_match['count'] * len(best_match['phrase'])
+            repeat_ratio = repeat_len / len(text)
+
+            # 截斷：保留重複開始前的內容 + 一次重複片段
+            clean_end = best_match['start'] + len(best_match['phrase'])
+            clean_text = text[:clean_end].rstrip()
+
+            return {
+                'has_repetition': True,
+                'clean_text': clean_text,
+                'repeat_ratio': repeat_ratio,
+                'repeated_phrase': best_match['phrase'][:100],
+                'repeat_count': best_match['count'],
+            }
+
+        return {'has_repetition': False, 'clean_text': text, 'repeat_ratio': 0.0, 'repeated_phrase': ''}
+
     def split_audio(self, input_path, segment_duration=600):
         """將音頻分割成小段（預設每段10分鐘），並儲存到 persistent 資料夾"""
         
@@ -223,11 +282,16 @@ class AudioTranscriber:
         file_path,
         model="gpt-4o-transcribe",
         language="zh",
-        response_format="text",
+        response_format="text",  # 保留參數以維持 API 相容性，但內部固定使用 json 格式
         request_timeout=90,
         prompt_context=None,
     ):
-        """轉錄單個音頻檔案"""
+        """轉錄單個音頻檔案
+
+        Note: response_format 參數保留以維持向後相容，但 OpenAI API 呼叫時
+        固定使用 json 格式以取得時間戳資訊（gpt-4o-transcribe 模型只支援 json/text）。
+        """
+        _ = response_format  # 標記為有意忽略
         # 確保檔案有正確的副檔名
         file_name = os.path.basename(file_path)
         if not Path(file_name).suffix:
@@ -296,19 +360,19 @@ class AudioTranscriber:
         file_like = io.BytesIO(file_content)
         file_like.name = file_name
         
-        actual_format = "text"
-        
         # Note: OpenAI 'transcriptions' endpoint does not support system prompt for style.
         # It blindly transcribes what it hears.
         # If the audio is Mandarin, it might output Simplified.
         # We rely on the `translate` feature explicitly properly converting it later.
         
         # Prepare arguments
+        # gpt-4o-transcribe 模型只支援 'json' 或 'text' 格式
+        # 使用 'json' 格式可取得時間戳資訊
         kwargs = {
             "model": model,
             "file": file_like,
-            "language": language, 
-            "response_format": "verbose_json", # Use verbose_json to get timestamps
+            "language": language,
+            "response_format": "json",
             "timeout": request_timeout,
         }
         
@@ -375,10 +439,8 @@ class AudioTranscriber:
             )
             return response.choices[0].message.content.strip()
         except Exception as e:
-            return response.choices[0].message.content.strip()
-        except Exception as e:
             print(f"OpenAI Translation Error: {e}")
-            return text 
+            return text
 
     def translate_segments_batch(self, segments, target_lang, model="gpt-4o"):
         """
@@ -426,8 +488,9 @@ Rules:
             try:
                 # Use translate_text logic (or call API directly)
                 # We can reuse client.chat.completions
+                # 使用傳入的 model 參數，預設為 gpt-4o
                 response = self.client.chat.completions.create(
-                    model="gpt-4o", # Force high quality model for detailed task
+                    model=model,
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt}
@@ -474,24 +537,38 @@ Rules:
         auto_convert=True,
         segment_duration=600,
         request_timeout=90,
-        translate_langs=None, 
+        translate_langs=None,
         cleanup=False,
+        progress_callback=None,
     ):
-        """主要轉錄功能，處理所有邏輯"""
+        """主要轉錄功能，處理所有邏輯
+
+        progress_callback: Optional[Callable[[str, float], None]]
+            If provided, called with (status_message, fraction 0.0-1.0) at each stage.
+        """
+        def _emit(msg, frac):
+            if progress_callback:
+                try:
+                    progress_callback(msg, frac)
+                except Exception:
+                    pass
+
+        _emit("檢查音頻格式與大小", 0.0)
         self.log_stage("檢查音頻格式與大小")
 
         process_path = audio_path
-        temp_files = [] 
-        temp_dirs = []  
-        
+        temp_files = []
+        temp_dirs = []
+
         parts_dir = None
-        
+
         if translate_langs is None:
             translate_langs = []
 
         try:
             ext = Path(process_path).suffix.lower()
             if ext in self.VIDEO_FORMATS:
+                _emit("從影片擷取音訊中…", 0.02)
                 video_dir = tempfile.mkdtemp()
                 temp_dirs.append(video_dir)
                 process_path = self.extract_audio_from_video(process_path, video_dir)
@@ -508,14 +585,23 @@ Rules:
             print(f"  支援: {'是' if audio_info['supported'] else '否'}")
             print(f"  超過大小限制: {'是' if audio_info['too_large'] else '否'}")
 
-            if not audio_info['supported'] or (auto_convert and audio_info['extension'] != '.mp3'):
+            # 智慧格式轉換：只在格式不支援或非高相容性格式時才轉換
+            # 高相容性格式 (.mp3, .m4a, .wav) 可直接使用，節省轉換時間
+            needs_convert = not audio_info['supported']
+            if auto_convert and audio_info['extension'] not in self.HIGH_COMPAT_FORMATS:
+                needs_convert = True
+
+            if needs_convert:
                 print("\n需要轉換音頻格式...")
                 self.log_stage("轉換為高相容性 MP3 格式")
+                _emit("轉換為高相容性 MP3…", 0.05)
                 convert_dir = tempfile.mkdtemp()
                 temp_dirs.append(convert_dir)
                 process_path = self.convert_to_compatible_format(process_path, convert_dir)
                 temp_files.append(process_path)
                 audio_info = self.check_audio_format(process_path)
+            else:
+                print("\n格式相容，跳過轉換步驟")
 
             duration = self.get_audio_duration(process_path)
             if duration:
@@ -529,23 +615,29 @@ Rules:
             for lang in translate_langs:
                 final_text_map[lang] = ""
 
+            # 初始化分段轉錄列表（用於大檔案分段處理）
+            all_transcripts = []
+
             if needs_split:
                 print(f"\n檔案需要分段處理（每段 {segment_duration/60:.1f} 分鐘）...")
                 self.log_stage("音檔過大，開始分段轉錄")
-                
+                _emit("切割音檔中…", 0.08)
+
                 # 使用 persistent splitting
                 segments, parts_dir = self.split_audio(process_path, segment_duration=segment_duration)
-                
+                total_segments = len(segments)
+
                 # 建立 transcripts 目錄
                 transcripts_dir = Path(parts_dir) / "transcripts"
                 transcripts_dir.mkdir(parents=True, exist_ok=True)
 
-                all_transcripts = [] # List of dicts: {'original': text, 'en': text...}
-                
                 # Context passing variable
                 last_transcript_tail = None
-                
+
                 for i, segment in enumerate(segments):
+                    # Reserve 0.10..0.95 for segment progress; each segment advances 1/N of that band
+                    _seg_start_frac = 0.10 + 0.85 * (i / total_segments)
+                    _emit(f"轉錄第 {i+1}/{total_segments} 段…", _seg_start_frac)
                     segment_path = Path(segment['path'])
                     segment_name = segment_path.stem # e.g. segment_000
                     
@@ -600,24 +692,35 @@ Rules:
                             else:
                                 transcript_text = str(transcript)
                                 
-                            # Extract detailed segments if available (OpenAI verbose_json)
+                            # Extract detailed segments if available (OpenAI json format)
                             if hasattr(transcript, 'segments'):
                                 detailed_segments = transcript.segments
                             elif isinstance(transcript, dict) and 'segments' in transcript:
                                 detailed_segments = transcript['segments']
                             
+                            # === Repetition Loop 偵測 ===
+                            rep = self.detect_repetition(transcript_text)
+                            if rep['has_repetition']:
+                                print(f"⚠️  [{msg_prefix}] 偵測到重複迴圈！"
+                                      f"（重複 {rep['repeat_count']}x，佔 {rep['repeat_ratio']:.0%}）")
+                                print(f"    重複片段: \"{rep['repeated_phrase'][:60]}...\"")
+                                print(f"    已截斷重複部分，保留有效內容 "
+                                      f"({len(rep['clean_text'])}/{len(transcript_text)} chars)")
+                                transcript_text = rep['clean_text']
+
                             # Save text transcript
                             with open(transcript_file, "w", encoding="utf-8") as f:
                                 f.write(transcript_text)
-                                
+
                             # Save JSON transcript (with timestamps)
                             import json
                             with open(transcript_json_file, "w", encoding="utf-8") as f:
                                 json.dump({
                                     'text': transcript_text,
-                                    'segments': detailed_segments
+                                    'segments': detailed_segments,
+                                    'repetition_detected': rep['has_repetition'],
                                 }, f, ensure_ascii=False)
-                                
+
                             print(f"✓ [{msg_prefix}] 轉錄已儲存")
                             segment_data['text'] = transcript_text
                             segment_data['segments'] = detailed_segments
@@ -649,6 +752,7 @@ Rules:
                                 segment_data[lang] = trans_text
 
                     all_transcripts.append(segment_data)
+                    _emit(f"完成 {i+1}/{total_segments} 段", 0.10 + 0.85 * ((i + 1) / total_segments))
 
                 # Merge Logic for all keys
                 # We need to handle this per language
@@ -726,9 +830,10 @@ Rules:
                 # No Split
                 print("\n開始轉錄...")
                 self.log_stage("上傳音檔並等待模型回應")
+                _emit("上傳音檔並等待模型回應…", 0.30)
                 
-                # If SRT, request precise
-                resp_format = "verbose_json" if output_format == "srt" else "text"
+                # If SRT, request json format for timestamps
+                resp_format = "json" if output_format == "srt" else "text"
                 
                 transcript = self.transcribe_file(
                     process_path,
@@ -748,7 +853,17 @@ Rules:
                      final_text = str(transcript)
                 
                 self.log_stage("模型回應已取得")
-                
+
+                # === Repetition Loop 偵測（單檔模式）===
+                rep = self.detect_repetition(final_text)
+                if rep['has_repetition']:
+                    print(f"⚠️  偵測到重複迴圈！"
+                          f"（重複 {rep['repeat_count']}x，佔 {rep['repeat_ratio']:.0%}）")
+                    print(f"    重複片段: \"{rep['repeated_phrase'][:60]}...\"")
+                    print(f"    已截斷重複部分，保留有效內容 "
+                          f"({len(rep['clean_text'])}/{len(final_text)} chars)")
+                    final_text = rep['clean_text']
+
                 final_text_map['original'] = final_text
                 
                 # Check for precise segments availability
@@ -798,6 +913,7 @@ Rules:
                          final_text_map[key] = self.generate_srt_fallback(txt)
 
             self.log_stage("整理輸出內容")
+            _emit("整理輸出內容…", 0.98)
 
             if not needs_split:
                  print(f"\n轉錄完成！總字數：{len(final_text_map['original'])} 字元")
@@ -816,6 +932,7 @@ Rules:
                      else:
                          print(f"  暫存檔案保留於：{parts_dir}")
 
+            _emit("完成", 1.0)
             return final_text_map
 
         except Exception as e:

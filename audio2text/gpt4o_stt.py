@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from gpt4o_transcribe_improved import AudioTranscriber
 
@@ -21,12 +21,16 @@ def transcribe_audio_gpt4o(
     auto_convert: bool = True,
     segment_duration: int = 600,
     request_timeout: int = 90,
-) -> str:
+    progress_callback: Optional[Callable[[str, float], None]] = None,
+):
     """使用 GPT-4o 模型轉錄音訊。
 
     參數與回傳值與 `speech2text` 專案保持一致，實作則
     復用本專案的 `AudioTranscriber` 以支援影片音軌擷取、
     大檔自動分段、格式轉換等進階功能。
+
+    progress_callback: 可選，接收 (status_message, fraction 0..1) 的回呼，
+    供 GUI 顯示即時進度；長音檔分段時每段會有更新。
     """
 
     transcriber = AudioTranscriber(api_key)
@@ -38,6 +42,7 @@ def transcribe_audio_gpt4o(
         auto_convert=auto_convert,
         segment_duration=segment_duration,
         request_timeout=request_timeout,
+        progress_callback=progress_callback,
     )
 
 

@@ -390,7 +390,7 @@ def generate_ppt_from_images(image_folder, output_file=None, title="視頻捕獲
             # 跳過 macOS 隱藏文件
             if filename.startswith('._'):
                 continue
-            if filename.lower().endswith(('.png', '.jpg', '.jpeg')):
+            if filename.lower().endswith(('.png', '.jpg', '.jpeg', '.heic', '.heif')):
                 image_files.append(os.path.join(image_folder, filename))
                 
         if not image_files:
@@ -479,7 +479,7 @@ def generate_markdown_from_images(image_folder, output_file=None, title="視頻�
             # 跳過 macOS 隱藏文件
             if filename.startswith('._'):
                 continue
-            if filename.lower().endswith(('.png', '.jpg', '.jpeg')):
+            if filename.lower().endswith(('.png', '.jpg', '.jpeg', '.heic', '.heif')):
                 image_files.append(os.path.join(image_folder, filename))
                 
         if not image_files:
@@ -743,6 +743,27 @@ class VideoAudioProcessor:
         )
         transcribe_label.pack(pady=10)
         
+        # API Key 輸入區域
+        transcribe_api_frame = tk.Frame(frame)
+        transcribe_api_frame.pack(fill=tk.X, pady=5)
+        
+        tk.Label(transcribe_api_frame, text="OpenAI API Key:").pack(side=tk.LEFT, padx=10)
+        
+        self.transcribe_api_key_entry = tk.Entry(transcribe_api_frame, width=50, show="*")
+        self.transcribe_api_key_entry.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        
+        # 預填環境變數的 API Key
+        if self.saved_api_key:
+            self.transcribe_api_key_entry.insert(0, self.saved_api_key)
+        
+        # 顯示/隱藏按鈕
+        self.transcribe_api_key_visible = tk.BooleanVar(value=False)
+        self.transcribe_api_key_toggle_btn = tk.Button(
+            transcribe_api_frame, text="顯示", width=6,
+            command=self.toggle_transcribe_api_key_visibility
+        )
+        self.transcribe_api_key_toggle_btn.pack(side=tk.LEFT, padx=5)
+        
         # 音頻文件選擇區域
         audio_file_frame = tk.Frame(frame)
         audio_file_frame.pack(fill=tk.X, pady=5)
@@ -809,9 +830,10 @@ class VideoAudioProcessor:
         )
         transcribe_status_label.pack(pady=5)
         
-        # 轉錄進度條
+        # 轉錄進度條（有進度回呼時為 determinate，否則 indeterminate）
         self.transcribe_progress = ttk.Progressbar(
-            frame, orient="horizontal", length=300, mode="indeterminate"
+            frame, orient="horizontal", length=300, mode="determinate",
+            maximum=100, value=0,
         )
         self.transcribe_progress.pack(pady=5)
         
@@ -851,6 +873,19 @@ class VideoAudioProcessor:
                 
                 self.slide_output_entry.delete(0, tk.END)
                 self.slide_output_entry.insert(0, output_folder)
+    
+    def toggle_transcribe_api_key_visibility(self):
+        """切換轉錄 API Key 顯示/隱藏"""
+        if self.transcribe_api_key_visible.get():
+            # 目前是顯示狀態，切換為隱藏
+            self.transcribe_api_key_entry.config(show="*")
+            self.transcribe_api_key_toggle_btn.config(text="顯示")
+            self.transcribe_api_key_visible.set(False)
+        else:
+            # 目前是隱藏狀態，切換為顯示
+            self.transcribe_api_key_entry.config(show="")
+            self.transcribe_api_key_toggle_btn.config(text="隱藏")
+            self.transcribe_api_key_visible.set(True)
     
     def save_file(self, entry_widget, filetypes):
         """選擇保存文件的路徑"""
@@ -929,40 +964,29 @@ class VideoAudioProcessor:
             messagebox.showerror("錯誤", "音頻文件不存在")
             return
         
-        # 檢查 API Key
-        api_key = self.saved_api_key or os.environ.get("OPENAI_API_KEY", "")
-        if not api_key:
-            # 彈出對話框要求輸入 API Key
-            dialog = tk.Toplevel(self.root)
-            dialog.title("輸入 OpenAI API Key")
-            dialog.geometry("500x150")
-            
-            tk.Label(dialog, text="請輸入您的 OpenAI API Key:").pack(pady=10)
-            api_key_entry = tk.Entry(dialog, width=60, show="*")
-            api_key_entry.pack(pady=10)
-            
-            def confirm_api_key():
-                key = api_key_entry.get().strip()
-                if key:
-                    self.saved_api_key = key
-                    dialog.destroy()
-                    self.start_transcription(audio_path)
-                else:
-                    messagebox.showwarning("警告", "請輸入有效的 API Key")
-            
-            tk.Button(dialog, text="確認", command=confirm_api_key).pack(pady=10)
-            
-            dialog.transient(self.root)
-            dialog.grab_set()
-            self.root.wait_window(dialog)
+        # 檢查 API Key - 優先從輸入欄位讀取
+        api_key = self.transcribe_api_key_entry.get().strip()
+        if api_key:
+            # 更新 saved_api_key 以供後續使用
+            self.saved_api_key = api_key
         else:
-            self.start_transcription(audio_path)
+            # 回退到環境變數
+            api_key = os.environ.get("OPENAI_API_KEY", "")
+            if api_key:
+                self.saved_api_key = api_key
+        
+        if not api_key:
+            messagebox.showwarning("警告", "請輸入 OpenAI API Key")
+            self.transcribe_api_key_entry.focus_set()
+            return
+        
+        self.start_transcription(audio_path)
     
     def start_transcription(self, audio_path):
         """開始轉錄處理"""
         model = self.transcribe_model_var.get()
         output_format = self.transcribe_format_var.get()
-        
+
         # 生成輸出文件名
         base_name = os.path.splitext(audio_path)[0]
         if output_format == "text":
@@ -971,25 +995,51 @@ class VideoAudioProcessor:
             output_path = f"{base_name}_transcription.srt"
         else:  # markdown
             output_path = f"{base_name}_transcription.md"
-        
-        # 更新狀態
-        self.transcribe_status_var.set("正在轉錄音頻...")
-        self.transcribe_progress.start(10)
+
+        # 更新狀態 — determinate 進度條從 0 開始
+        self.transcribe_status_var.set("準備轉錄…")
+        self.transcribe_progress.config(mode="determinate", maximum=100, value=0)
         self.transcribe_btn.config(state=tk.DISABLED)
-        
+
+        # 從 worker thread 安全更新 UI：用 root.after(0, ...) 投遞到 Tk main loop
+        def on_progress(msg: str, fraction: float):
+            pct = max(0.0, min(1.0, float(fraction))) * 100.0
+            self.root.after(0, lambda m=msg, p=pct: (
+                self.transcribe_status_var.set(m),
+                self.transcribe_progress.config(value=p),
+            ))
+
         def transcribe_thread():
             try:
                 # 調用轉錄函數
                 result = self.transcribe_audio_to_text(
-                    audio_path, 
+                    audio_path,
                     self.saved_api_key,
                     model,
-                    output_format
+                    output_format,
+                    progress_callback=on_progress,
                 )
                 
                 # 保存結果到文件
-                with open(output_path, "w", encoding="utf-8") as f:
-                    f.write(result)
+                # transcribe() 可能回傳 dict (多語言) 或 str (舊版相容)
+                if isinstance(result, dict):
+                    # 寫入主要輸出（original）
+                    original_text = result.get('original', '')
+                    with open(output_path, "w", encoding="utf-8") as f:
+                        f.write(original_text)
+                    
+                    # 若有翻譯結果，額外寫入對應檔案
+                    from pathlib import Path
+                    out_p = Path(output_path)
+                    for lang_key, lang_text in result.items():
+                        if lang_key == 'original' or not lang_text:
+                            continue
+                        lang_path = out_p.parent / f"{out_p.stem}_{lang_key}{out_p.suffix}"
+                        with open(lang_path, "w", encoding="utf-8") as f:
+                            f.write(lang_text)
+                else:
+                    with open(output_path, "w", encoding="utf-8") as f:
+                        f.write(result)
                 
                 # 在主線程中更新 UI
                 self.root.after(0, lambda: self.transcription_completed(True, output_path))
@@ -1000,7 +1050,7 @@ class VideoAudioProcessor:
         
         threading.Thread(target=transcribe_thread).start()
     
-    def transcribe_audio_to_text(self, file_path, api_key, model="gpt-4o-transcribe", output_format="text"):
+    def transcribe_audio_to_text(self, file_path, api_key, model="gpt-4o-transcribe", output_format="text", progress_callback=None):
         """使用 GPT-4o 模型轉錄音訊並回傳文字。"""
         try:
             # 先嘗試使用與參考專案介面一致的模組
@@ -1017,6 +1067,7 @@ class VideoAudioProcessor:
                     language="zh",
                     output_format=output_format,
                     request_timeout=90,
+                    progress_callback=progress_callback,
                 )
 
             # 若無法載入模組，退回至原本的進階轉錄器
@@ -1030,6 +1081,7 @@ class VideoAudioProcessor:
                 output_format=output_format,
                 auto_convert=True,
                 request_timeout=90,
+                progress_callback=progress_callback,
             )
 
         except ImportError:
@@ -1078,9 +1130,13 @@ class VideoAudioProcessor:
     
     def transcription_completed(self, success, result):
         """轉錄完成後的處理"""
-        self.transcribe_progress.stop()
+        try:
+            self.transcribe_progress.stop()
+        except tk.TclError:
+            pass
+        self.transcribe_progress.config(value=100 if success else 0)
         self.transcribe_btn.config(state=tk.NORMAL)
-        
+
         if success:
             self.transcribe_status_var.set(f"轉錄完成: {result}")
             messagebox.showinfo("成功", f"轉錄結果已保存到: {result}")
@@ -1564,7 +1620,7 @@ class VideoAudioProcessor:
             # 跳過 macOS 隱藏文件
             if filename.startswith('._'):
                 continue
-            if filename.lower().endswith(('.png', '.jpg', '.jpeg')):
+            if filename.lower().endswith(('.png', '.jpg', '.jpeg', '.heic', '.heif')):
                 has_images = True
                 break
                 
