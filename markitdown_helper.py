@@ -8,8 +8,39 @@ MarkItDown 輔助工具
 
 import os
 import base64
+import tempfile
 import traceback
 from typing import List, Tuple, Dict, Any, Optional
+
+
+def _convert_heic_to_jpeg(heic_path: str) -> str:
+    """
+    將 HEIC/HEIF 圖片轉換為 JPEG 格式的臨時文件
+
+    參數:
+        heic_path: HEIC 圖片路徑
+
+    返回:
+        轉換後的 JPEG 臨時文件路徑
+    """
+    try:
+        import pillow_heif
+        pillow_heif.register_heif_opener()
+    except ImportError:
+        raise ImportError(
+            "需要安裝 pillow-heif 來處理 HEIC 格式圖片。"
+            "請執行: pip install pillow-heif"
+        )
+
+    from PIL import Image
+    img = Image.open(heic_path)
+    if img.mode != 'RGB':
+        img = img.convert('RGB')
+
+    temp_file = tempfile.NamedTemporaryFile(suffix='.jpg', delete=False)
+    img.save(temp_file.name, 'JPEG', quality=95)
+    temp_file.close()
+    return temp_file.name
 
 
 def convert_images_to_markdown(
@@ -36,12 +67,14 @@ def convert_images_to_markdown(
         output_file: 輸出文件路徑
         info: 包含轉換統計信息的字典
     """
+    heic_temp_files = []  # 追蹤需要清理的臨時文件
     try:
         # 過濾掉 macOS 的隱藏文件和非圖片文件
         valid_image_paths = []
         skipped_files = []
-        supported_formats = {'.png', '.jpg', '.jpeg', '.gif', '.webp'}
-        
+        supported_formats = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.heic', '.heif'}
+        heic_formats = {'.heic', '.heif'}
+
         for img_path in image_paths:
             basename = os.path.basename(img_path)
             # 跳過以 ._ 開頭的 macOS 隱藏文件
@@ -49,16 +82,32 @@ def convert_images_to_markdown(
                 skipped_files.append(img_path)
                 print(f"跳過 macOS 隱藏文件: {basename}")
                 continue
-            
+
             # 檢查文件擴展名
             ext = os.path.splitext(basename)[1].lower()
             if ext not in supported_formats:
                 skipped_files.append(img_path)
                 print(f"跳過不支持的文件格式: {basename}")
                 continue
-                
-            valid_image_paths.append(img_path)
-        
+
+            # HEIC/HEIF 格式需要轉換為 JPEG
+            if ext in heic_formats:
+                try:
+                    print(f"轉換 HEIC 圖片: {basename}")
+                    converted_path = _convert_heic_to_jpeg(img_path)
+                    heic_temp_files.append(converted_path)
+                    valid_image_paths.append(converted_path)
+                except ImportError as e:
+                    print(str(e))
+                    skipped_files.append(img_path)
+                    continue
+                except Exception as e:
+                    print(f"轉換 HEIC 圖片失敗 {basename}: {e}")
+                    skipped_files.append(img_path)
+                    continue
+            else:
+                valid_image_paths.append(img_path)
+
         if not valid_image_paths:
             return False, "", {
                 "error": "沒有有效的圖片文件可處理",
@@ -203,6 +252,14 @@ def convert_images_to_markdown(
         print(f"生成 Markdown 時出錯: {error_msg}")
         traceback.print_exc()
         return False, "", {"error": error_msg, "success": False}
+    finally:
+        # 清理 HEIC 轉換的臨時文件
+        for temp_path in heic_temp_files:
+            try:
+                if os.path.exists(temp_path):
+                    os.unlink(temp_path)
+            except OSError:
+                pass
 
 
 def process_images_to_ppt(
@@ -227,23 +284,36 @@ def process_images_to_ppt(
     返回:
         success: 是否成功
     """
+    heic_temp_files_ppt = []
     try:
         from pptx import Presentation
         from pptx.util import Inches
-        
-        # 獲取所有圖片文件（過濾掉 macOS 隱藏文件）
+        from slide_sort import sorted_image_paths
+
+        # 先按「檔名時間標記 → 檔案建立時間」排序，再對 HEIC 做轉換（保留順序）
+        source_paths = sorted_image_paths(
+            image_dir,
+            extensions=('.png', '.jpg', '.jpeg', '.heic', '.heif'),
+        )
+
         image_files = []
-        for filename in sorted(os.listdir(image_dir)):
-            # 跳過 macOS 隱藏文件
-            if filename.startswith('._'):
-                continue
-            if filename.lower().endswith(('.png', '.jpg', '.jpeg')):
-                image_files.append(os.path.join(image_dir, filename))
-                
+        for src in source_paths:
+            ext = os.path.splitext(src)[1].lower()
+            if ext in ('.heic', '.heif'):
+                try:
+                    print(f"轉換 HEIC 圖片: {os.path.basename(src)}")
+                    converted = _convert_heic_to_jpeg(src)
+                    heic_temp_files_ppt.append(converted)
+                    image_files.append(converted)
+                except Exception as e:
+                    print(f"轉換 HEIC 圖片失敗 {os.path.basename(src)}: {e}")
+            else:
+                image_files.append(src)
+
         if not image_files:
             print("未找到圖片文件")
             return False
-            
+
         # 創建新的 PowerPoint 演示文稿
         prs = Presentation()
         
@@ -270,11 +340,19 @@ def process_images_to_ppt(
         # 保存演示文稿
         prs.save(output_ppt)
         print(f"已成功生成 PowerPoint: {output_ppt}")
-        
+
         return True
-        
+
     except Exception as e:
         error_msg = str(e)
         print(f"生成 PowerPoint 時出錯: {error_msg}")
         traceback.print_exc()
-        return False 
+        return False
+    finally:
+        # 清理 HEIC 轉換的臨時文件
+        for temp_path in heic_temp_files_ppt:
+            try:
+                if os.path.exists(temp_path):
+                    os.unlink(temp_path)
+            except OSError:
+                pass
