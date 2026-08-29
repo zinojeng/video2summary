@@ -8,9 +8,33 @@ MarkItDown 輔助工具 - Gemini 版本
 
 import os
 import base64
+import tempfile
 import traceback
 from typing import List, Tuple, Dict, Any, Optional
 import time
+from model_config import GEMINI_VISION
+
+
+def _convert_heic_to_jpeg(heic_path: str) -> str:
+    """將 HEIC/HEIF 圖片轉換為 JPEG 格式的臨時文件"""
+    try:
+        import pillow_heif
+        pillow_heif.register_heif_opener()
+    except ImportError:
+        raise ImportError(
+            "需要安裝 pillow-heif 來處理 HEIC 格式圖片。"
+            "請執行: pip install pillow-heif"
+        )
+
+    from PIL import Image
+    img = Image.open(heic_path)
+    if img.mode != 'RGB':
+        img = img.convert('RGB')
+
+    temp_file = tempfile.NamedTemporaryFile(suffix='.jpg', delete=False)
+    img.save(temp_file.name, 'JPEG', quality=95)
+    temp_file.close()
+    return temp_file.name
 
 
 def convert_images_to_markdown_gemini(
@@ -19,7 +43,7 @@ def convert_images_to_markdown_gemini(
     title: str = "圖片內容分析",
     use_llm: bool = False,
     api_key: Optional[str] = None,
-    model: str = "gemini-2.0-flash-exp"
+    model: str = GEMINI_VISION
 ) -> Tuple[bool, str, Dict[str, Any]]:
     """
     將圖片文件轉換為 Markdown 文件（使用 Gemini API）
@@ -37,12 +61,14 @@ def convert_images_to_markdown_gemini(
         output_file: 輸出文件路徑
         info: 包含轉換統計信息的字典
     """
+    heic_temp_files = []  # 追蹤需要清理的臨時文件
     try:
         # 過濾掉 macOS 的隱藏文件和非圖片文件
         valid_image_paths = []
         skipped_files = []
-        supported_formats = {'.png', '.jpg', '.jpeg', '.gif', '.webp'}
-        
+        supported_formats = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.heic', '.heif'}
+        heic_formats = {'.heic', '.heif'}
+
         for img_path in image_paths:
             basename = os.path.basename(img_path)
             # 跳過以 ._ 開頭的 macOS 隱藏文件
@@ -50,16 +76,32 @@ def convert_images_to_markdown_gemini(
                 skipped_files.append(img_path)
                 print(f"跳過 macOS 隱藏文件: {basename}")
                 continue
-            
+
             # 檢查文件擴展名
             ext = os.path.splitext(basename)[1].lower()
             if ext not in supported_formats:
                 skipped_files.append(img_path)
                 print(f"跳過不支持的文件格式: {basename}")
                 continue
-                
-            valid_image_paths.append(img_path)
-        
+
+            # HEIC/HEIF 格式需要轉換為 JPEG
+            if ext in heic_formats:
+                try:
+                    print(f"轉換 HEIC 圖片: {basename}")
+                    converted_path = _convert_heic_to_jpeg(img_path)
+                    heic_temp_files.append(converted_path)
+                    valid_image_paths.append(converted_path)
+                except ImportError as e:
+                    print(str(e))
+                    skipped_files.append(img_path)
+                    continue
+                except Exception as e:
+                    print(f"轉換 HEIC 圖片失敗 {basename}: {e}")
+                    skipped_files.append(img_path)
+                    continue
+            else:
+                valid_image_paths.append(img_path)
+
         if not valid_image_paths:
             return False, "", {
                 "error": "沒有有效的圖片文件可處理",
@@ -195,3 +237,11 @@ def convert_images_to_markdown_gemini(
         print(f"生成 Markdown 時出錯: {error_msg}")
         traceback.print_exc()
         return False, "", {"error": error_msg, "success": False}
+    finally:
+        # 清理 HEIC 轉換的臨時文件
+        for temp_path in heic_temp_files:
+            try:
+                if os.path.exists(temp_path):
+                    os.unlink(temp_path)
+            except OSError:
+                pass

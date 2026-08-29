@@ -20,6 +20,7 @@ from pathlib import Path
 from openai import OpenAI
 import math
 
+from model_config import OPENAI_TRANSLATION
 from gemini_transcribe import (
     GEMINI_TEXT_MODEL,
     GEMINI_TRANSCRIBE_MODEL,
@@ -58,7 +59,7 @@ TRANSCRIBE_ONLY_MODELS = {
     "whisper-1",
 }
 
-DEFAULT_OPENAI_TEXT_MODEL = "gpt-4o"
+DEFAULT_OPENAI_TEXT_MODEL = OPENAI_TRANSLATION
 
 
 def resolve_translation_model(transcribe_model):
@@ -554,7 +555,7 @@ class AudioTranscriber:
             
         return transcript
 
-    def translate_text(self, text, target_lang, model="gpt-4o"):
+    def translate_text(self, text, target_lang, model=DEFAULT_OPENAI_TEXT_MODEL):
         """翻譯文字"""
         if not text or not text.strip():
             return ""
@@ -601,7 +602,7 @@ class AudioTranscriber:
             print(f"OpenAI Translation Error: {e}")
             return text
 
-    def translate_segments_batch(self, segments, target_lang, model="gpt-4o"):
+    def translate_segments_batch(self, segments, target_lang, model=DEFAULT_OPENAI_TEXT_MODEL):
         """
         批次翻譯 segments 列表，保持時間軸對應。
         Input segments: [{'start': 1.0, 'end': 2.0, 'text': 'Hello'}, ...]
@@ -1311,7 +1312,7 @@ def main():
     parser.add_argument("audio_file", help="音頻檔案路徑")
     parser.add_argument("--model", default=DEFAULT_TRANSCRIBE_MODEL,
                        help="選擇模型 (預設 gpt-transcribe；亦可用 whisper-1、"
-                            "gemini-2.0-flash-exp 等)")
+                            "gemini-3.7-flash 等)")
     parser.add_argument("--keywords",
                        help="專有名詞提示，用逗號分隔 (例如: HbA1c,GLP-1,dapagliflozin)")
     parser.add_argument("--allow-legacy-model", action="store_true",

@@ -9,6 +9,7 @@ import os
 import sys
 import argparse
 from markitdown_helper_gemini import convert_images_to_markdown_gemini
+from model_config import GEMINI_VISION
 
 
 def main():
@@ -19,7 +20,7 @@ def main():
     
     parser.add_argument('folder', help='幻燈片文件夾路徑')
     parser.add_argument('-k', '--api-key', required=True, help='Google API Key')
-    parser.add_argument('-m', '--model', default='gemini-2.0-flash-exp',
+    parser.add_argument('-m', '--model', default=GEMINI_VISION,
                        help='使用的 Gemini 模型')
     parser.add_argument('-s', '--selected-only', action='store_true',
                        help='只處理 selected_slides 子文件夾')

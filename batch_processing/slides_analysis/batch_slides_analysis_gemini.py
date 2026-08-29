@@ -17,12 +17,15 @@ from datetime import datetime
 
 # 導入 Gemini 版本的 markitdown 輔助模組
 from markitdown_helper_gemini import convert_images_to_markdown_gemini
+# 讓子目錄下的工具也能 import 專案根目錄的 model_config
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from model_config import GEMINI_VISION, GEMINI_NOTES
 
 
 class BatchSlidesAnalyzer:
     """批量幻燈片分析器 - Gemini 版本"""
     
-    def __init__(self, api_key: str, model: str = "gemini-2.0-flash-exp",
+    def __init__(self, api_key: str, model: str = GEMINI_VISION,
                  selected_only: bool = False, force: bool = False,
                  skip_existing: bool = True, auto_confirm: bool = False):
         """
@@ -423,7 +426,7 @@ def main():
   %(prog)s /path/to/ADA2025 --api-key YOUR_API_KEY --selected-only
   
   # 使用其他 Gemini 模型
-  %(prog)s /path/to/ADA2025 --api-key YOUR_API_KEY --model gemini-1.5-pro
+  %(prog)s /path/to/ADA2025 --api-key YOUR_API_KEY --model gemini-3.7-flash
   
   # 強制重新處理
   %(prog)s /path/to/ADA2025 --api-key YOUR_API_KEY --force
@@ -436,8 +439,8 @@ def main():
     parser.add_argument('path', help='包含幻燈片文件夾的路徑')
     parser.add_argument('-k', '--api-key', required=True,
                        help='Google API Key')
-    parser.add_argument('-m', '--model', default='gemini-2.0-flash-exp',
-                       help='使用的 Gemini 模型 (默認: gemini-2.0-flash-exp)')
+    parser.add_argument('-m', '--model', default=GEMINI_VISION,
+                       help=f'使用的 Gemini 模型 (默認: {GEMINI_VISION})')
     parser.add_argument('-s', '--selected-only', action='store_true',
                        help='只處理 selected_slides 子文件夾')
     parser.add_argument('-f', '--force', action='store_true',

@@ -37,15 +37,27 @@ echo ""
 DEFAULT_PATH="/Volumes/WD_BLACK/國際年會/ADA2025"
 
 # 獲取路徑
-echo "請輸入要分析的文件夾路徑"
-echo "默認: $DEFAULT_PATH"
-read -p "路徑 [回車使用默認]: " USER_PATH
+if [ -n "$1" ]; then
+    USER_PATH="$1"
+    echo "使用命令行提供的路徑: $USER_PATH"
+else
+    echo "請輸入要分析的文件夾路徑"
+    echo "默認: $DEFAULT_PATH"
+    read -p "路徑 [回車使用默認]: " USER_PATH
+fi
 
 if [ -z "$USER_PATH" ]; then
     FOLDER_PATH="$DEFAULT_PATH"
 else
     FOLDER_PATH="$USER_PATH"
 fi
+
+# Strip surrounding single quotes
+FOLDER_PATH="${FOLDER_PATH%\'}"
+FOLDER_PATH="${FOLDER_PATH#\'}"
+# Strip surrounding double quotes
+FOLDER_PATH="${FOLDER_PATH%\"}"
+FOLDER_PATH="${FOLDER_PATH#\"}"
 
 # 檢查路徑是否存在
 if [ ! -d "$FOLDER_PATH" ]; then
@@ -110,7 +122,7 @@ case $MODEL in
         MODEL_DESC="GPT-4o"
         ;;
     *)
-        MODEL_ARG="--model gpt-4o-mini"
+        MODEL_ARG=""  # 不指定，交由 model_config.OPENAI_VISION 決定
         MODEL_DESC="GPT-4o-mini"
         ;;
 esac

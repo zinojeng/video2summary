@@ -17,12 +17,15 @@ from datetime import datetime
 
 # 導入 markitdown 輔助模組
 from markitdown_helper import convert_images_to_markdown
+# 讓子目錄下的工具也能 import 專案根目錄的 model_config
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from model_config import OPENAI_VISION
 
 
 class BatchSlidesAnalyzer:
     """批量幻燈片分析器"""
     
-    def __init__(self, api_key: str, model: str = "gpt-4o-mini",
+    def __init__(self, api_key: str, model: str = OPENAI_VISION,
                  selected_only: bool = False, force: bool = False,
                  skip_existing: bool = True):
         """
@@ -30,7 +33,7 @@ class BatchSlidesAnalyzer:
         
         參數:
             api_key: OpenAI API Key
-            model: 使用的模型 (gpt-4o-mini, gpt-4o)
+            model: 使用的模型（預設見 model_config.OPENAI_VISION）
             selected_only: 是否只處理 selected_slides 子文件夾
             force: 是否強制重新處理已有分析的文件夾
             skip_existing: 是否跳過已存在分析文件的文件夾
@@ -423,9 +426,9 @@ def main():
     parser.add_argument('path', help='包含幻燈片文件夾的路徑')
     parser.add_argument('-k', '--api-key', required=True,
                        help='OpenAI API Key')
-    parser.add_argument('-m', '--model', default='gpt-4o-mini',
-                       choices=['gpt-4o-mini', 'gpt-4o'],
-                       help='使用的模型 (默認: gpt-4o-mini)')
+    parser.add_argument('-m', '--model', default=OPENAI_VISION,
+                       choices=[OPENAI_VISION, 'gpt-4o'],
+                       help=f'使用的模型 (默認: {OPENAI_VISION})')
     parser.add_argument('-s', '--selected-only', action='store_true',
                        help='只處理 selected_slides 子文件夾')
     parser.add_argument('-f', '--force', action='store_true',

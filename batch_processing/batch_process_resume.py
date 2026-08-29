@@ -12,6 +12,9 @@ import json
 import time
 from pathlib import Path
 from markitdown_helper_gemini import convert_images_to_markdown_gemini
+# 讓子目錄下的工具也能 import 專案根目錄的 model_config
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from model_config import GEMINI_VISION
 
 
 def load_progress():
@@ -38,7 +41,7 @@ def find_slide_folders(base_path):
     return sorted(folders)
 
 
-def process_folder(folder_path, api_key, model="gemini-2.0-flash-exp"):
+def process_folder(folder_path, api_key, model=GEMINI_VISION):
     """處理單個文件夾的 selected_slides"""
     selected_path = os.path.join(folder_path, 'selected_slides')
     if not os.path.exists(selected_path):

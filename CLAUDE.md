@@ -19,44 +19,53 @@ python video_audio_processor.py
 ./run_gui.sh
 ```
 
-### Audio Transcription (Improved)
+### Audio Transcription
 ```bash
-# Use improved transcription tool
-python gpt4o_transcribe_improved.py <audio_file>
+python gpt4o_transcribe_improved.py <audio_file> [options]
 
-# Or use the shortcut script:
-./transcribe_audio.sh <audio_file> [options]
+# Interactive menu (model / language / format / batch)
+./transcribe_audio_v2.sh
 
-# Debug audio issues
-python debug_transcription.py <audio_file>
-
-# Test transcription
-python test_improved_transcription.py <audio_file>
+# Debug helpers live under tests/
+python tests/debug_transcription.py <audio_file>
 ```
+
+See **Audio Transcription** below for model choice and the full flag list.
 
 ### Installing Dependencies
 ```bash
-# Required dependencies
-pip install moviepy opencv-python numpy pillow python-pptx scikit-image
+pip install -r requirements.txt
+brew install ffmpeg   # macOS: required for conversion, splitting and duration
+```
 
-# Optional dependencies
-pip install markitdown>=0.1.1  # Enhanced Markdown generation
-pip install openai>=1.0.0      # AI-assisted features
+API keys are read from the environment (or a local `.env`, which is gitignored):
 
-# For improved audio transcription
-pip install ffmpeg-python      # Optional: for programmatic ffmpeg usage
-brew install ffmpeg            # macOS: for audio format conversion
+```bash
+export OPENAI_API_KEY=...    # gpt-transcribe, whisper-1, GPT vision/notes
+export GEMINI_API_KEY=...    # gemini-3.5-transcribe and all Gemini models
 ```
 
 ### Testing
 ```bash
-# Test slide processing functionality
-python test_slides.py
+python tests/test_slides.py   # slide processing
 ```
 
 ## Code Architecture
 
 ### Main Components
+
+0. **model_config.py**
+   - Single source of truth for every model ID, organised by role
+   - `upgrade_legacy_model()` maps retired IDs to current ones
+   - Change models here; tools import role constants instead of literals
+
+0b. **gemini_transcribe.py**
+   - `gemini-3.5-transcribe` backend via the new `google-genai` SDK
+     (`client.interactions`, not `GenerativeModel.generate_content`)
+   - Groups word annotations into segments on speaker change, length and duration
+   - Returns the same `{'text', 'segments'}` shape as the OpenAI path, so the
+     SRT / translation / merge pipelines are shared
+   - `generate_text()` provides Gemini text generation for translation
 
 1. **video_audio_processor.py** (40KB)
    - Main GUI application using Tkinter with three tabs
@@ -148,88 +157,140 @@ The application checks for required dependencies on startup and offers to instal
 - When processing completes successfully, the app offers to switch to the next logical tab
 - The application supports both basic and AI-enhanced processing modes for generating documents from captured slides
 
-### Audio Transcription Improvements (2025-07-20)
+## AI Models (模型設定)
 
-**New features to handle "Audio file might be corrupted or unsupported" errors:**
+**All model IDs live in `model_config.py`. Change models there, not in individual
+tools.** Each tool imports a role constant (`OPENAI_VISION`, `GEMINI_NOTES`, …)
+rather than hardcoding a string, so bumping a model is a one-file edit.
 
-1. **gpt4o_transcribe_improved.py** - Standalone improved transcription tool
-   - Auto-converts audio to compatible MP3 format (16kHz, mono, 64kbps CBR)
-   - Handles large files (>25MB) with automatic segmentation
-   - Proper filename and MIME type handling
-   - Detailed error messages with solutions
-
-2. **Automatic Format Conversion**
-   - Converts any audio format to high-compatibility MP3
-   - Uses ffmpeg with optimal parameters for OpenAI API
-   - Preserves original files
-
-3. **Large File Support**
-   - Automatically splits files larger than 25MB into 10-minute segments
-   - Processes segments and combines results
-   - Maintains transcription continuity
-   - Shows progress for each segment
-
-4. **Enhanced Error Handling**
-   - Detailed diagnostics for format issues
-   - Uses GPT-4o models (gpt-4o-transcribe, gpt-4o-mini-transcribe)
-   - Clear error messages with suggested fixes
-
-5. **Output Format Support**
-   - **Text format (.txt)**: Plain text transcription
-   - **Markdown format (.md)**: Adds header "# 語音轉錄結果"
-   - **SRT format (.srt)**: Subtitle format with timestamps
-   - Auto-adds file extensions if not specified
-   - Format-specific processing for better readability
-
-6. **Integration**
-   - video_audio_processor.py now uses improved transcription
-   - Backward compatible with existing code
-   - Falls back to original method if improved module unavailable
-
-### Common Audio Transcription Issues and Solutions
-
-1. **"Audio file might be corrupted or unsupported"**
-   - **Cause**: OpenAI API strict format requirements
-   - **Solution**: gpt4o_transcribe_improved.py auto-converts to compatible MP3 format
-
-2. **"File size exceeds 25MB limit"**
-   - **Cause**: OpenAI API file size limitation
-   - **Solution**: Automatic splitting into 10-minute segments
-
-3. **"response_format 'srt' is not compatible with model"**
-   - **Cause**: GPT-4o models only support 'text' and 'json' formats
-   - **Solution**: Gets text format and converts to SRT with timestamps
-
-4. **"'str' object has no attribute 'text'"**
-   - **Cause**: GPT-4o models return string directly, not object
-   - **Solution**: Checks response type and handles accordingly
-
-5. **Incomplete transcription appearance**
-   - **Cause**: Long paragraphs make content seem shorter
-   - **Solution**: Added double line breaks between segments for better readability
-
-### Usage Examples
+Models are retired quickly. Verify against the live API rather than trusting
+docs or this file:
 
 ```bash
-# Basic transcription
+python -c "from openai import OpenAI; print([m.id for m in OpenAI().models.list()])"
+python -c "from google import genai; print([m.name for m in genai.Client().models.list()])"
+```
+
+References: [OpenAI models](https://developers.openai.com/api/docs/models) ·
+[Gemini models](https://ai.google.dev/gemini-api/docs/models)
+
+### Roles and current defaults
+
+| Role | OpenAI | Gemini | Used by |
+|---|---|---|---|
+| Transcription | `gpt-transcribe` | `gemini-3.5-transcribe` | transcription pipeline |
+| Timestamped transcription | `whisper-1` | (Gemini covers this) | SRT with real timings |
+| Notes / summary | `gpt-5.6-terra` | `gemini-3.7-flash` | speaker notes, merged notes |
+| Heavy reasoning | `gpt-5.6-sol` | `gemini-3.1-pro-preview` | reserved, more expensive |
+| Slide vision (bulk) | `gpt-5.6-luna` | `gemini-3.5-flash-lite` | batch slide analysis |
+| Slide vision (dense) | `gpt-5.6-terra` | `gemini-3.7-flash` | tables, charts |
+| Translation | `gpt-5.6-terra` | `gemini-3.5-flash-lite` | subtitle/text translation |
+
+`upgrade_legacy_model()` maps retired IDs to current ones, so old configs and
+saved commands keep working.
+
+### Model gotchas
+
+- **`gemini-2.0-flash-exp` is shut down.** Any code still naming it fails outright.
+- **Gemini 3.x rejects `temperature` / `top_p` / `top_k`** and returns 400. Old
+  `GenerationConfig(temperature=...)` calls must drop those fields.
+- **Transcription models cannot generate text.** Passing `gpt-transcribe` or
+  `gemini-3.5-transcribe` to a chat/translate call fails or silently misroutes.
+  `resolve_translation_model()` maps a transcription model to a text model from
+  the same provider.
+- **Two different Google SDKs are in play, and one is dead.**
+  `gemini-3.5-transcribe` needs the new `google-genai` (`client.interactions`).
+  The `batch_processing/` notes and merge tools plus `markitdown_helper_gemini.py`
+  still import `google.generativeai`, which now prints *"All support for the
+  `google.generativeai` package has ended"* on import. Their bump to
+  `gemini-3.7-flash` is **untested** — an unmaintained SDK may not be able to
+  address current models at all. Migrating these to `google-genai` is the next
+  piece of work; until then, run one file end to end before trusting a batch.
+
+## Audio Transcription
+
+### Choosing a model
+
+| | Text accuracy | Timestamps | Speaker labels |
+|---|---|---|---|
+| `gpt-transcribe` | best | estimated only | no |
+| `whisper-1` | worst | real | no |
+| `gemini-3.5-transcribe` | middle | real | yes (up to 8) |
+
+Neither `gpt-transcribe` nor the legacy `gpt-4o-transcribe` returns segment
+timestamps, so their SRT timings are estimated from character counts and scaled
+to the real audio duration. **For accurate subtitles use
+`gemini-3.5-transcribe`; for speaker-labelled conference notes it is the only
+option.**
+
+### gemini-3.5-transcribe constraints
+
+Discovered by live testing; **not in Google's documentation**:
+
+- `custom_vocabulary` is incompatible with diarization **and** with word
+  timestamps. The three are mutually exclusive — the API returns 400. `keywords`
+  are dropped automatically when annotations are on; pass
+  `--no-diarization --no-word-timestamps` to prefer the vocabulary instead.
+- Requesting diarization without word timestamps returns **zero** annotations,
+  so no speaker labels appear. Speaker identity rides on the word records, so
+  the code enables word timestamps whenever diarization is requested.
+- Speaker ids come back as `spk:0`, `spk:1`, not `spk_1`.
+- Limits: 1 hour per request, **30 minutes** once diarization or timestamps are
+  on. Segment length defaults to 1800s for Gemini and 600s for OpenAI's 25MB cap.
+- Mandarin must be sent as `cmn-Hans-CN`; Google's supported-language table has
+  no `zh-TW`. Output script varies run to run — add `--translate zh-tw` if you
+  need reliable Traditional Chinese.
+
+### Usage
+
+```bash
+# Default: gpt-transcribe
 python gpt4o_transcribe_improved.py audio.mp3
 
-# Specify output format
-python gpt4o_transcribe_improved.py audio.mp3 --format text --output transcript.txt
-python gpt4o_transcribe_improved.py audio.mp3 --format markdown --output transcript.md
-python gpt4o_transcribe_improved.py audio.mp3 --format srt --output subtitles.srt
+# Speaker labels + real timestamps (conference recordings)
+python gpt4o_transcribe_improved.py audio.mp3 --model gemini-3.5-transcribe --format srt
 
-# Choose model
-python gpt4o_transcribe_improved.py audio.mp3 --model gpt-4o-transcribe    # Higher quality
-python gpt4o_transcribe_improved.py audio.mp3 --model gpt-4o-mini-transcribe  # Faster
+# Domain terms instead of speaker labels
+python gpt4o_transcribe_improved.py audio.mp3 --model gemini-3.5-transcribe \
+    --keywords "HbA1c,GLP-1,dapagliflozin" --no-diarization --no-word-timestamps
 
-# Specify language
-python gpt4o_transcribe_improved.py audio.mp3 --language zh  # Chinese
-python gpt4o_transcribe_improved.py audio.mp3 --language en  # English
+# OpenAI with term hints
+python gpt4o_transcribe_improved.py audio.mp3 --keywords "HbA1c,GLP-1"
 
-# Disable auto-conversion (not recommended)
-python gpt4o_transcribe_improved.py audio.mp3 --no-convert
+# Output formats
+python gpt4o_transcribe_improved.py audio.mp3 --format markdown --output notes.md
+python gpt4o_transcribe_improved.py audio.mp3 --format srt --output subs.srt
+
+# Translation (routed to a text model of the same provider automatically)
+python gpt4o_transcribe_improved.py audio.mp3 --format srt --translate en,zh-tw
+
+# Keep a legacy model instead of auto-upgrading
+python gpt4o_transcribe_improved.py audio.mp3 --model gpt-4o-transcribe --allow-legacy-model
 ```
+
+### How the pipeline works
+
+1. Video input has its audio extracted first.
+2. Format conversion to 16kHz mono MP3, skipped for already-compatible formats
+   (`.mp3/.m4a/.wav`, plus `.flac/.ogg/.aac` on the Gemini path).
+3. Splitting by duration; ffmpeg's trailing remainder is dropped when under a
+   second, since Gemini rejects such fragments and OpenAI wastes a request.
+4. Per-segment transcription with resume: results are cached in
+   `<audio>_parts/segments/` keyed by a `run_signature` covering model, language,
+   keywords, diarization, timestamps and segment length. Changing any of them
+   re-transcribes rather than returning a stale result.
+5. Merge — segment timestamps are relative and get their offset added once.
+6. Optional translation, then output as text / markdown / SRT.
+
+### Known API behaviours
+
+- OpenAI **silently ignores unknown body parameters** on the transcription
+  endpoint, so a request succeeding does not prove a parameter took effect.
+- GPT-transcribe-family models accept only `json` and `text` response formats;
+  `srt`/`vtt` and `timestamp_granularities` require `whisper-1`, which needs
+  `verbose_json` to return segments at all.
+- Files over 25MB must be split for OpenAI. Gemini uploads via the Files API
+  and is bounded by duration instead.
 
 ## Batch Processing Tools (批次處理工具)
 
@@ -265,10 +326,10 @@ batch_processing/
    - HTML preview generation
 
 2. **batch_slides_analysis.py**
-   - Batch process slide folders for AI analysis using OpenAI GPT-4
+   - Batch process slide folders for AI vision analysis (OpenAI)
    - Analyzes images in selected_slides folders to reduce API costs
    - Creates slides_analysis.md files with detailed content analysis
-   - Supports GPT-4o-mini and GPT-4o models
+   - Model comes from `model_config.OPENAI_VISION`; override with `--model`
 
 3. **batch_process_full_slides.py**
    - Process folders without selected_slides subdirectories
@@ -278,7 +339,7 @@ batch_processing/
 ### Transcription Notes (轉錄筆記)
 
 1. **batch_transcription_notes_v2.py**
-   - Process audio transcription files (*.txt, *.srt) with Gemini 2.5 Pro
+   - Process audio transcription files (*.txt, *.srt) with `model_config.GEMINI_NOTES`
    - Generates detailed speaker notes, NOT summaries
    - Features:
      - Preserves all speaker content and important details
@@ -325,7 +386,9 @@ All batch tools support:
 
 ## ADA2025 Processing Results
 
-Successfully processed materials from ADA2025 conference:
+Historical record of one completed run. The token counts and costs below reflect
+the models in use at the time (`gemini-2.5-pro`, `gpt-4o-mini`), not the current
+defaults in `model_config.py`.
 
 ### Slide Analysis
 - **28** total slide folders

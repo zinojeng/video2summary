@@ -11,6 +11,8 @@ import base64
 import tempfile
 import traceback
 from typing import List, Tuple, Dict, Any, Optional
+import sys
+from model_config import OPENAI_VISION
 
 
 def _convert_heic_to_jpeg(heic_path: str) -> str:
@@ -49,7 +51,7 @@ def convert_images_to_markdown(
     title: str = "圖片內容分析",
     use_llm: bool = False,
     api_key: Optional[str] = None,
-    model: str = "gpt-4o-mini"
+    model: str = OPENAI_VISION
 ) -> Tuple[bool, str, Dict[str, Any]]:
     """
     將圖片文件轉換為 Markdown 文件
@@ -268,7 +270,7 @@ def process_images_to_ppt(
     title: str = "幻燈片簡報",
     use_llm: bool = False,
     api_key: Optional[str] = None,
-    model: str = "gpt-4o-mini"
+    model: str = OPENAI_VISION
 ) -> bool:
     """
     將文件夾中的圖片轉換為 PowerPoint 文件

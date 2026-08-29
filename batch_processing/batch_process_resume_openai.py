@@ -12,6 +12,9 @@ import json
 import time
 from pathlib import Path
 from markitdown_helper import convert_images_to_markdown
+# 讓子目錄下的工具也能 import 專案根目錄的 model_config
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from model_config import OPENAI_VISION
 
 
 def load_progress():
@@ -55,7 +58,7 @@ def check_existing_analysis(folder_path):
     return existing
 
 
-def process_folder(folder_path, api_key, model="gpt-4o-mini"):
+def process_folder(folder_path, api_key, model=OPENAI_VISION):
     """處理單個文件夾的 selected_slides"""
     selected_path = os.path.join(folder_path, 'selected_slides')
     if not os.path.exists(selected_path):

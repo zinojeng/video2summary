@@ -9,9 +9,10 @@ import os
 import sys
 import time
 from markitdown_helper import convert_images_to_markdown
+from model_config import OPENAI_VISION
 
 
-def process_full_slides_folder(folder_path, api_key, model="gpt-4o-mini"):
+def process_full_slides_folder(folder_path, api_key, model=OPENAI_VISION):
     """處理完整的 slides 文件夾"""
     
     # 檢查是否已有分析文件

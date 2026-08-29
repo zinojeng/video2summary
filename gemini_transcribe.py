@@ -79,7 +79,7 @@ _AUDIO_MIME_TYPES = {
 def is_gemini_transcribe_model(model: Optional[str]) -> bool:
     """判斷是否要走本模組（gemini-3.5-transcribe 系列）。
 
-    舊的 gemini-2.5-flash / gemini-3-flash-preview 走的是
+    舊的 gemini-2.5-flash 這類文字模型走的是
     `google.generativeai` 的 generate_content，不在這裡處理。
     """
     return bool(model) and model.lower().startswith("gemini-3.5-transcribe")
@@ -503,7 +503,7 @@ class GeminiTranscriber:
 
 
 # 轉錄模型不能拿來做文字生成，翻譯時改用這顆文字模型。
-GEMINI_TEXT_MODEL = "gemini-2.5-flash"
+from model_config import GEMINI_TRANSLATION as GEMINI_TEXT_MODEL
 
 
 def generate_text(prompt: str, model: str = GEMINI_TEXT_MODEL,

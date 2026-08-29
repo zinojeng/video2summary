@@ -15,12 +15,15 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 import google.generativeai as genai
 from datetime import datetime
+# 讓子目錄下的工具也能 import 專案根目錄的 model_config
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from model_config import GEMINI_NOTES
 
 
 def setup_gemini(api_key: str):
     """設置 Gemini API"""
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('gemini-2.5-pro')
+    model = genai.GenerativeModel(GEMINI_NOTES)
     return model
 
 
@@ -177,7 +180,7 @@ def process_transcription_with_gemini(
             return True, response.text, {
                 'prompt_tokens': len(prompt),
                 'completion_tokens': len(response.text),
-                'model': 'gemini-2.5-pro'
+                'model': GEMINI_NOTES
             }
         else:
             return False, "No response from Gemini", {}
