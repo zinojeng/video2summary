@@ -20,8 +20,8 @@ from pathlib import Path
 from openai import OpenAI
 import math
 
-from model_config import OPENAI_TRANSLATION
-from gemini_transcribe import (
+from llm_provider_kit import OPENAI_TRANSLATION
+from llm_provider_kit import (
     GEMINI_TEXT_MODEL,
     GEMINI_TRANSCRIBE_MODEL,
     is_gemini_transcribe_model,
@@ -44,7 +44,7 @@ KEYWORDS_SUPPORTED_MODELS = {"gpt-transcribe", "gpt-live-transcribe"}
 
 # 舊模型別名 -> 新模型，方便沿用舊設定檔或指令的使用者自動升級。
 # 單一來源在 model_config，這裡只是沿用既有名稱給舊呼叫端。
-from model_config import LEGACY_MODEL_ALIASES
+from llm_provider_kit import LEGACY_MODEL_ALIASES
 
 
 # 這些是「只能轉錄」的模型，不能拿來做翻譯這種文字生成。
@@ -429,7 +429,7 @@ class AudioTranscriber:
         # gemini-3.5-transcribe：唯一同時提供講者標記與詞級時間戳的後端。
         # 走的是新的 google-genai SDK，與下面舊 Gemini 分支完全不同的 API。
         if is_gemini_transcribe_model(model):
-            from gemini_transcribe import GeminiTranscriber
+            from llm_provider_kit import GeminiTranscriber
 
             gemini = GeminiTranscriber(
                 os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
@@ -446,7 +446,7 @@ class AudioTranscriber:
 
         # Gemini Model Handling（gemini-3.5-transcribe 以外的一般 Gemini 模型）
         if "gemini" in model.lower():
-            from gemini_client import GeminiTextModel
+            from llm_provider_kit import GeminiTextModel
 
             gemini_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
             if not gemini_key:
@@ -560,7 +560,7 @@ class AudioTranscriber:
 
         # Gemini
         if "gemini" in trans_model.lower():
-            from gemini_client import generate_text
+            from llm_provider_kit import generate_text
             try:
                 return generate_text(
                     f"{system_prompt}\n\nText:\n{user_prompt}", model=trans_model
@@ -632,7 +632,7 @@ Rules:
             try:
                 # 轉錄模型不能做文字生成，且必須送到對的供應商去
                 if "gemini" in trans_model.lower():
-                    from gemini_client import generate_text
+                    from llm_provider_kit import generate_text
                     result = generate_text(
                         f"{system_prompt}\n\n{user_prompt}", model=trans_model
                     )

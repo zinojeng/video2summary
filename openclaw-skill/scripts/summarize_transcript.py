@@ -28,9 +28,7 @@ import argparse
 from pathlib import Path
 from datetime import datetime
 
-# 讓 openclaw-skill/scripts 也能 import 專案根目錄的共用設定
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from model_config import GEMINI_NOTES, OPENAI_NOTES
+from llm_provider_kit import GEMINI_NOTES, OPENAI_NOTES
 
 # ---------------------------------------------------------------------------
 # System prompts — 定義 AI 角色
@@ -310,7 +308,7 @@ def summarize_with_gemini(
     走 gemini_client（新的 google-genai SDK）。舊的 google.generativeai 已停止
     支援，且 Gemini 3.x 不接受 temperature，所以這裡不再送取樣參數。
     """
-    from gemini_client import GeminiTextModel
+    from llm_provider_kit import GeminiTextModel
 
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:

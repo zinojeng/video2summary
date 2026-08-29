@@ -19,8 +19,8 @@ import shutil
 from pathlib import Path
 from openai import OpenAI
 
-from model_config import OPENAI_TRANSLATION
-from gemini_transcribe import is_gemini_transcribe_model
+from llm_provider_kit import OPENAI_TRANSLATION
+from llm_provider_kit import is_gemini_transcribe_model
 from gpt4o_transcribe_improved import resolve_transcribe_model, resolve_translation_model
 import math
 
@@ -248,7 +248,7 @@ class AudioTranscriber:
         # gemini-3.5-transcribe 走的是 interactions 轉錄 API，
         # 不能丟給文字模型的 generate_content。
         if is_gemini_transcribe_model(model):
-            from gemini_transcribe import GeminiTranscriber
+            from llm_provider_kit import GeminiTranscriber
 
             gemini = GeminiTranscriber(
                 os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
@@ -261,7 +261,7 @@ class AudioTranscriber:
 
         # 其餘 Gemini 文字/多模態模型
         if "gemini" in model.lower():
-            from gemini_client import GeminiTextModel
+            from llm_provider_kit import GeminiTextModel
 
             gemini_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
             if not gemini_key:
@@ -357,7 +357,7 @@ class AudioTranscriber:
 
         # Gemini
         if "gemini" in trans_model.lower():
-            from gemini_client import generate_text
+            from llm_provider_kit import generate_text
             try:
                 return generate_text(
                     f"{system_prompt}\n\nText:\n{user_prompt}", model=trans_model
@@ -431,7 +431,7 @@ Rules:
                 # We can reuse client.chat.completions
                 # 使用傳入的 model 參數，預設為 gpt-4o
                 if "gemini" in trans_model.lower():
-                    from gemini_client import generate_text
+                    from llm_provider_kit import generate_text
                     result = generate_text(
                         f"{system_prompt}\n\n{user_prompt}", model=trans_model
                     )

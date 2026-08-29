@@ -9,4 +9,4 @@ scikit-image>=0.19.0
 markitdown>=0.1.1  # 增強型Markdown生成功能
 openai>=1.0.0      # AI輔助功能
 pillow-heif>=0.18.0  # 支持 iPhone HEIC/HEIF 圖片格式
-google-genai>=2.13.0  # 所有 Gemini 呼叫（interactions API 需 >=1.55，轉錄欄位需 >=2.13）
+llm-provider-kit @ https://github.com/zinojeng/llm-provider-kit/archive/refs/heads/main.tar.gz  # 共用模型設定與 OpenAI/Gemini 呼叫層

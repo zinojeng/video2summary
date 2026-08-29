@@ -12,9 +12,7 @@ import json
 import time
 from pathlib import Path
 from markitdown_helper_gemini import convert_images_to_markdown_gemini
-# 讓子目錄下的工具也能 import 專案根目錄的 model_config
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from model_config import GEMINI_VISION
+from llm_provider_kit import GEMINI_VISION
 
 
 def load_progress():

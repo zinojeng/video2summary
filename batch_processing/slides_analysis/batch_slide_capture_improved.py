@@ -30,6 +30,8 @@ class BatchImprovedSlideCapture:
         list_only: bool = False,
         yes: bool = False,
         generate_ppt: bool = True,
+        ultra_mode: bool = False,
+        smart_mode: bool = False,
     ):
         self.threshold = threshold
         self.auto_select = auto_select
@@ -38,6 +40,8 @@ class BatchImprovedSlideCapture:
         self.list_only = list_only
         self.yes = yes
         self.generate_ppt = generate_ppt
+        self.ultra_mode = ultra_mode
+        self.smart_mode = smart_mode
         self.video_extensions = {".mp4",
                                   ".avi",
                                   ".mkv",
@@ -125,7 +129,7 @@ class BatchImprovedSlideCapture:
         try:
             print("使用改進模式捕獲幻燈片...")
             print(f"相似度閾值: {self.threshold}")
-            success, result = capture_slides_improved(video_path, output_folder, self.threshold)
+            success, result = capture_slides_improved(video_path, output_folder, self.threshold, self.ultra_mode, self.smart_mode)
 
             if not success:
                 print(f"\n❌ 捕獲失敗: {result.get('error', '未知錯誤')}")
@@ -528,6 +532,19 @@ def main():
     )
     parser.set_defaults(generate_ppt=True)
 
+    parser.add_argument(
+        "--ultra",
+        "-u",
+        action="store_true",
+        help="開啟 Ultra Mode (高密度掃描)",
+    )
+    parser.add_argument(
+        "--smart",
+        "-s",
+        action="store_true",
+        help="開啟 Smart Mode (雙重混合掃描)",
+    )
+
     args = parser.parse_args()
 
     processor = BatchImprovedSlideCapture(
@@ -538,6 +555,8 @@ def main():
         list_only=args.list_only,
         yes=args.yes,
         generate_ppt=args.generate_ppt,
+        ultra_mode=args.ultra,
+        smart_mode=args.smart,
     )
 
     try:

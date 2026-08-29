@@ -12,8 +12,8 @@ from pathlib import Path
 from datetime import datetime
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from gemini_client import GeminiTextModel
-from model_config import GEMINI_NOTES
+from llm_provider_kit import GeminiTextModel
+from llm_provider_kit import GEMINI_NOTES
 
 
 def setup_gemini(api_key: str):

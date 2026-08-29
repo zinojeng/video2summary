@@ -5,47 +5,92 @@
 
 set -euo pipefail
 
-# 切換到腳本所在的專案根目錄，確保 Python 模組可被找到
+# 顏色設定
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+# 切換到腳本所在的專案根目錄
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 export PYTHONPATH="$SCRIPT_DIR:${PYTHONPATH:-}"
 
-# 嘗試啟動虛擬環境
-activate_venv() {
+VENV_DIR="venv"
+REQ_FILE="requirements.txt"
+
+# ============================================================
+# 自動建立 / 啟動虛擬環境
+# ============================================================
+ensure_venv() {
+    # 若已在虛擬環境中，直接返回
     if [[ -n "${VIRTUAL_ENV:-}" ]]; then
         return
     fi
-    if [[ -f "venv/bin/activate" ]]; then
-        # shellcheck disable=SC1091
-        source "venv/bin/activate"
+
+    # 偵測既有 venv
+    local activate=""
+    if [[ -f "$VENV_DIR/bin/activate" ]]; then
+        activate="$VENV_DIR/bin/activate"
     elif [[ -f ".venv/bin/activate" ]]; then
-        # shellcheck disable=SC1091
-        source ".venv/bin/activate"
-    else
-        echo "找不到虛擬環境！請先建立 venv 或 .venv" >&2
-        exit 1
+        activate=".venv/bin/activate"
     fi
+
+    # 若找不到，自動建立
+    if [[ -z "$activate" ]]; then
+        echo -e "${YELLOW}虛擬環境不存在，自動建立中...${NC}"
+
+        if ! command -v python3 &>/dev/null; then
+            echo -e "${RED}錯誤：找不到 python3，請先安裝 Python 3.8+${NC}"
+            exit 1
+        fi
+
+        python3 -m venv "$VENV_DIR"
+        activate="$VENV_DIR/bin/activate"
+
+        # shellcheck disable=SC1090
+        source "$activate"
+
+        echo -e "${YELLOW}升級 pip...${NC}"
+        python -m pip install --upgrade pip --quiet
+
+        if [[ -f "$REQ_FILE" ]]; then
+            echo -e "${YELLOW}安裝依賴套件 ($REQ_FILE)...${NC}"
+            pip install -r "$REQ_FILE"
+        fi
+
+        echo -e "${GREEN}✓ 虛擬環境建立完成並已安裝依賴${NC}"
+        echo
+        return
+    fi
+
+    # 啟動既有虛擬環境
+    # shellcheck disable=SC1090
+    source "$activate"
 }
 
-activate_venv
+ensure_venv
 
+# ============================================================
 # 選單主迴圈
+# ============================================================
 while true; do
     clear
-    echo "============================================"
-    echo "        Video2Summary GUI 啟動選單         "
-    echo "============================================"
+    echo -e "${BLUE}============================================${NC}"
+    echo -e "${BLUE}        Video2Summary GUI 啟動選單         ${NC}"
+    echo -e "${BLUE}============================================${NC}"
     echo
-    echo "1. 啟動 GUI 主程式 (video_audio_processor.py)"
-    echo "2. 改進模式批次截圖 (capture_slides_improved)"
-    echo "0. 離開"
+    echo -e "  ${YELLOW}1.${NC} 啟動 GUI 主程式 (video_audio_processor.py)"
+    echo -e "  ${YELLOW}2.${NC} 改進模式批次截圖 (capture_slides_improved)"
+    echo -e "  ${RED}0.${NC} 離開"
     echo
     read -rp "請輸入選項 (0-2): " choice
 
     case "$choice" in
         1)
             echo
-            echo "啟動 GUI 主程式..."
+            echo -e "${GREEN}啟動 GUI 主程式...${NC}"
             python "video_audio_processor.py"
             read -rp $'\n按 Enter 返回選單...' _
             ;;
@@ -72,24 +117,14 @@ while true; do
 
             cmd=("python" "batch_processing/slides_analysis/batch_slide_capture_improved.py" "$target_path" "--threshold" "$threshold_value")
 
-            if [[ "$recursive_ans" =~ ^[Yy]$ ]]; then
-                cmd+=("--recursive")
-            fi
-            if [[ "$auto_select_ans" =~ ^[Yy]$ ]]; then
-                cmd+=("--auto-select")
-            fi
-            if [[ "$force_ans" =~ ^[Yy]$ ]]; then
-                cmd+=("--force")
-            fi
-            if [[ "$list_only_ans" =~ ^[Yy]$ ]]; then
-                cmd+=("--list-only")
-            fi
-            if [[ "$ppt_ans" =~ ^[Nn]$ ]]; then
-                cmd+=("--no-ppt")
-            fi
+            [[ "$recursive_ans" =~ ^[Yy]$ ]]    && cmd+=("--recursive")
+            [[ "$auto_select_ans" =~ ^[Yy]$ ]]   && cmd+=("--auto-select")
+            [[ "$force_ans" =~ ^[Yy]$ ]]          && cmd+=("--force")
+            [[ "$list_only_ans" =~ ^[Yy]$ ]]      && cmd+=("--list-only")
+            [[ "$ppt_ans" =~ ^[Nn]$ ]]            && cmd+=("--no-ppt")
 
             echo
-            echo "執行指令: ${cmd[*]}"
+            echo -e "執行指令: ${cmd[*]}"
             echo "--------------------------------------------"
             "${cmd[@]}"
             echo "--------------------------------------------"
@@ -97,11 +132,11 @@ while true; do
             ;;
         0)
             echo
-            echo "再見！"
+            echo -e "${GREEN}再見！${NC}"
             exit 0
             ;;
         *)
-            echo "\n無效的選項，請重新輸入。"
+            echo -e "\n${RED}無效的選項，請重新輸入。${NC}"
             sleep 1.5
             ;;
     esac

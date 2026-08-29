@@ -9,7 +9,7 @@ import os
 import sys
 import time
 from markitdown_helper import convert_images_to_markdown
-from model_config import OPENAI_VISION
+from llm_provider_kit import OPENAI_VISION
 
 
 def process_speaker_folder(folder_path, api_key, model=OPENAI_VISION):

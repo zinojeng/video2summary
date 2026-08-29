@@ -17,9 +17,7 @@ from datetime import datetime
 
 # 導入 Gemini 版本的 markitdown 輔助模組
 from markitdown_helper_gemini import convert_images_to_markdown_gemini
-# 讓子目錄下的工具也能 import 專案根目錄的 model_config
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from model_config import GEMINI_VISION, GEMINI_NOTES
+from llm_provider_kit import GEMINI_VISION, GEMINI_NOTES
 
 
 class BatchSlidesAnalyzer:

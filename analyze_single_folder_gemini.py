@@ -9,7 +9,7 @@ import os
 import sys
 import argparse
 from markitdown_helper_gemini import convert_images_to_markdown_gemini
-from model_config import GEMINI_VISION
+from llm_provider_kit import GEMINI_VISION
 
 
 def main():

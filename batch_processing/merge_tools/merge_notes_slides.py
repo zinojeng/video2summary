@@ -14,10 +14,8 @@ import time
 from pathlib import Path
 from typing import List, Dict, Tuple, Optional
 from datetime import datetime
-# 讓子目錄下的工具也能 import 專案根目錄的 model_config
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from model_config import GEMINI_NOTES
-from gemini_client import GeminiTextModel
+from llm_provider_kit import GEMINI_NOTES
+from llm_provider_kit import GeminiTextModel
 
 
 def setup_gemini(api_key: str):

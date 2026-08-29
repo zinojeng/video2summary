@@ -23,9 +23,7 @@ import sys
 from pathlib import Path
 from datetime import datetime
 
-# 讓 openclaw-skill/scripts 也能 import 專案根目錄的共用設定
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from model_config import OPENAI_VISION
+from llm_provider_kit import OPENAI_VISION
 
 AUDIO_DIR = Path.home() / "audio"
 SKILL_DIR = Path.home() / ".openclaw" / "workspace" / "skills" / "audio-transcribe" / "scripts"

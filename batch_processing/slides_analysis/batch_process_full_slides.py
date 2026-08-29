@@ -11,9 +11,7 @@ import json
 import time
 from pathlib import Path
 from markitdown_helper import convert_images_to_markdown
-# 讓子目錄下的工具也能 import 專案根目錄的 model_config
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from model_config import OPENAI_VISION
+from llm_provider_kit import OPENAI_VISION
 
 
 def process_full_slides_folder(folder_path, api_key, model=OPENAI_VISION):

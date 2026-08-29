@@ -12,7 +12,7 @@ import tempfile
 import traceback
 from typing import List, Tuple, Dict, Any, Optional
 import time
-from model_config import GEMINI_VISION
+from llm_provider_kit import GEMINI_VISION
 
 
 def _convert_heic_to_jpeg(heic_path: str) -> str:
@@ -119,7 +119,7 @@ def convert_images_to_markdown_gemini(
         # 如果需要使用 LLM 進行圖片識別和分析
         if use_llm and api_key:
             try:
-                from gemini_client import GeminiTextModel
+                from llm_provider_kit import GeminiTextModel
 
                 # 新版 google-genai SDK（舊的 google.generativeai 已停止支援）
                 gemini_model = GeminiTextModel(model, api_key=api_key)

@@ -12,7 +12,7 @@ import tempfile
 import traceback
 from typing import List, Tuple, Dict, Any, Optional
 import sys
-from model_config import OPENAI_VISION
+from llm_provider_kit import OPENAI_VISION
 
 
 def _convert_heic_to_jpeg(heic_path: str) -> str:
