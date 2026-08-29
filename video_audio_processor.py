@@ -781,22 +781,12 @@ class VideoAudioProcessor:
         self.transcribe_model_var = tk.StringVar(value="gpt-transcribe")
         
         tk.Radiobutton(
-            model_frame, text="GPT-Transcribe (推薦)", 
+            model_frame, text="GPT-Transcribe (文字最準)", 
             variable=self.transcribe_model_var, value="gpt-transcribe"
         ).pack(side=tk.LEFT, padx=5)
         
         tk.Radiobutton(
-            model_frame, text="GPT-4o-Mini (舊版/較省)", 
-            variable=self.transcribe_model_var, value="gpt-4o-mini-transcribe"
-        ).pack(side=tk.LEFT, padx=5)
-        
-        tk.Radiobutton(
-            model_frame, text="Whisper-1 (詞級時間戳)", 
-            variable=self.transcribe_model_var, value="whisper-1"
-        ).pack(side=tk.LEFT, padx=5)
-        
-        tk.Radiobutton(
-            model_frame, text="Gemini 3.5 (講者標記+時間戳)", 
+            model_frame, text="Gemini 3.5 (講者標記+真實時間戳)", 
             variable=self.transcribe_model_var, value="gemini-3.5-transcribe"
         ).pack(side=tk.LEFT, padx=5)
         
@@ -1065,7 +1055,7 @@ class VideoAudioProcessor:
     def _plain_text_to_srt(text, audio_duration=None):
         """把純文字估算成合法 SRT。
 
-        時間軸是估算值，不是真實時間戳；要精準時間戳請選 whisper-1。
+        時間軸是估算值，不是真實時間戳；要精準時間戳請選 gemini-3.5-transcribe。
         """
         sentences = [s.strip() for s in text.replace("。", ".").split(".") if s.strip()]
         if not sentences:
@@ -1146,9 +1136,9 @@ class VideoAudioProcessor:
 
             client = OpenAI(api_key=api_key)
 
-            # 只有 whisper-1 支援 srt/vtt；新一代轉錄模型僅接受 json/text。
+            # 轉錄模型只接受 json/text，沒有可直接產生 srt 的 OpenAI 模型。
             response_format = "text"
-            if output_format == "srt" and model == "whisper-1":
+            if False:  # 已無支援 srt response_format 的模型
                 response_format = "srt"
 
             with open(file_path, "rb") as audio_file:

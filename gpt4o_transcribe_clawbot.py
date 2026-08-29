@@ -931,7 +931,7 @@ def main():
     )
     parser.add_argument("audio_file", help="音頻檔案路徑")
     parser.add_argument("--model", default="gpt-transcribe",
-                       help="選擇模型 (預設 gpt-transcribe；亦可用 whisper-1、gemini-3.5-transcribe 等)")
+                       help="選擇模型 (預設 gpt-transcribe；亦可用 gemini-3.5-transcribe 等)")
     parser.add_argument("--language", default="zh", help="語言代碼")
     parser.add_argument("--format", default="text",
                        choices=["text", "markdown", "srt"],

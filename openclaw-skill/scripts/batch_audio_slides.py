@@ -280,7 +280,7 @@ def analyze_slides_direct(folder, images, output_file, api_key):
                             {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{encoded}"}}
                         ]}
                     ],
-                    max_tokens=1500
+                    max_completion_tokens=1500
                 )
                 f.write(f"{response.choices[0].message.content}\n\n---\n\n")
 

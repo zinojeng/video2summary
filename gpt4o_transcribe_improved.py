@@ -43,10 +43,8 @@ MIN_SEGMENT_SECONDS = 1.0
 KEYWORDS_SUPPORTED_MODELS = {"gpt-transcribe", "gpt-live-transcribe"}
 
 # 舊模型別名 -> 新模型，方便沿用舊設定檔或指令的使用者自動升級。
-LEGACY_MODEL_ALIASES = {
-    "gpt-4o-transcribe": "gpt-transcribe",
-    "gpt-4o-mini-transcribe": "gpt-transcribe",
-}
+# 單一來源在 model_config，這裡只是沿用既有名稱給舊呼叫端。
+from model_config import LEGACY_MODEL_ALIASES
 
 
 # 這些是「只能轉錄」的模型，不能拿來做翻譯這種文字生成。
@@ -56,7 +54,6 @@ TRANSCRIBE_ONLY_MODELS = {
     "gpt-4o-transcribe",
     "gpt-4o-mini-transcribe",
     "gpt-4o-transcribe-diarize",
-    "whisper-1",
 }
 
 DEFAULT_OPENAI_TEXT_MODEL = OPENAI_TRANSLATION
@@ -227,8 +224,7 @@ class AudioTranscriber:
     def _normalize_segments(segments):
         """把模型回傳的 segment 統一成純 dict，避免 json.dump 失敗。
 
-        whisper-1 的 verbose_json 會回傳 TranscriptionSegment 物件，
-        直接丟給 json.dump 會噴 TypeError。
+        部分後端會回傳 pydantic 物件，直接丟給 json.dump 會噴 TypeError。
         """
         if not segments:
             return []
@@ -416,8 +412,8 @@ class AudioTranscriber:
         """轉錄單個音頻檔案
 
         Note: response_format 參數保留以維持向後相容，但 OpenAI API 呼叫時
-        固定使用 json 格式以取得時間戳資訊（轉錄模型只支援 json/text，
-        詞級時間戳與 srt/vtt 仍只有 whisper-1 支援）。
+        固定使用 json 格式（轉錄模型只支援 json/text）。OpenAI 這邊已無
+        提供時間戳的模型，需要真實時間戳請用 gemini-3.5-transcribe。
 
         keywords: 可選的字串列表，提供音檔中可能出現的專有名詞（藥名、縮寫、
         講者名），僅 gpt-transcribe / gpt-live-transcribe 支援。
@@ -516,12 +512,7 @@ class AudioTranscriber:
             "timeout": request_timeout,
         }
 
-        # whisper-1 是唯一會回傳 segment/word 時間戳的模型，但必須要求
-        # verbose_json；用 json 的話拿不到 segments，SRT 只能退回估算時間。
-        if model == "whisper-1":
-            kwargs["response_format"] = "verbose_json"
-            kwargs["timestamp_granularities"] = ["segment"]
-        
+
         if prompt_context:
             kwargs["prompt"] = prompt_context
 
@@ -909,7 +900,7 @@ Rules:
                                 transcript_text = str(transcript)
                                 
                             # Extract detailed segments if available
-                            # (whisper-1 + verbose_json 才會有；且回傳的是 pydantic
+                            # (只有回傳時間戳的後端才會有；可能是 pydantic
                             #  物件，必須轉成純 dict 才能寫進 JSON 快取)
                             if hasattr(transcript, 'segments'):
                                 detailed_segments = self._normalize_segments(transcript.segments)
@@ -1153,7 +1144,7 @@ Rules:
                          if key == 'original':
                              print(f"[Warn] 模型 {model} 未回傳 segment 時間戳，"
                                    f"SRT 時間軸為估算值；需要精準時間戳請改用 "
-                                   f"--model gemini-3.5-transcribe 或 --model whisper-1")
+                                   f"--model gemini-3.5-transcribe")
                          final_text_map[key] = self.generate_srt_fallback(
                              txt, audio_duration=duration
                          )
@@ -1249,7 +1240,7 @@ Rules:
 
         時間軸是「估算」出來的，不是真實時間戳。若提供 audio_duration，
         會把估算長度等比縮放到實際音檔長度，避免長音檔的字幕在幾分鐘後
-        就結束。要真正精準的時間戳請改用 whisper-1。
+        就結束。要真正精準的時間戳請改用 gemini-3.5-transcribe。
         """
         sentences = [s.strip() for s in text.replace('。', '.').split('.') if s.strip()]
         if not sentences:
@@ -1302,7 +1293,7 @@ def main():
     )
     parser.add_argument("audio_file", help="音頻檔案路徑")
     parser.add_argument("--model", default=DEFAULT_TRANSCRIBE_MODEL,
-                       help="選擇模型 (預設 gpt-transcribe；亦可用 whisper-1、"
+                       help="選擇模型 (預設 gpt-transcribe；亦可用 gemini-3.5-transcribe、"
                             "gemini-3.7-flash 等)")
     parser.add_argument("--keywords",
                        help="專有名詞提示，用逗號分隔 (例如: HbA1c,GLP-1,dapagliflozin)")

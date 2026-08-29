@@ -25,7 +25,7 @@ Gemini  : https://ai.google.dev/gemini-api/docs/models
 - gemini-2.0-flash-exp 已經停用（shut down），舊程式碼裡若還留著會直接失敗。
 - Gemini 3.x 系列不接受 temperature / top_p / top_k，送了會回 400。
   舊的 GenerationConfig(temperature=...) 呼叫要拿掉這些參數。
-- 轉錄模型（gpt-transcribe、whisper-1、gemini-3.5-transcribe）不能拿來做
+- 轉錄模型（gpt-transcribe、gemini-3.5-transcribe）不能拿來做
   文字生成；翻譯/摘要請用下面的文字模型。
 """
 
@@ -41,8 +41,8 @@ OPENAI_TRANSCRIBE = "gpt-transcribe"
 # 唯一同時提供講者標記與詞級時間戳的後端。
 GEMINI_TRANSCRIBE = "gemini-3.5-transcribe"
 
-# OpenAI 唯一會回傳詞/段落時間戳與 srt/vtt 的模型（中文品質較差）。
-OPENAI_TIMESTAMP_TRANSCRIBE = "whisper-1"
+# 需要真實時間戳一律用 Gemini；whisper-1 已移除（中文品質太差）。
+TIMESTAMP_TRANSCRIBE = GEMINI_TRANSCRIBE
 
 # ==========================================================================
 # 長文生成：講者筆記、摘要、合併筆記
@@ -91,6 +91,7 @@ LEGACY_MODEL_ALIASES = {
     # 轉錄
     "gpt-4o-transcribe": OPENAI_TRANSCRIBE,
     "gpt-4o-mini-transcribe": OPENAI_TRANSCRIBE,
+    "whisper-1": GEMINI_TRANSCRIBE,
 }
 
 
@@ -119,7 +120,7 @@ __all__ = [
     "LEGACY_MODEL_ALIASES",
     "OPENAI_NOTES",
     "OPENAI_REASONING",
-    "OPENAI_TIMESTAMP_TRANSCRIBE",
+    "TIMESTAMP_TRANSCRIBE",
     "OPENAI_TRANSCRIBE",
     "OPENAI_TRANSLATION",
     "OPENAI_VISION",

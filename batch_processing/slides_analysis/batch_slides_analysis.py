@@ -427,7 +427,7 @@ def main():
     parser.add_argument('-k', '--api-key', required=True,
                        help='OpenAI API Key')
     parser.add_argument('-m', '--model', default=OPENAI_VISION,
-                       choices=[OPENAI_VISION, 'gpt-4o'],
+                       choices=[OPENAI_VISION, 'gpt-5.6-terra'],
                        help=f'使用的模型 (默認: {OPENAI_VISION})')
     parser.add_argument('-s', '--selected-only', action='store_true',
                        help='只處理 selected_slides 子文件夾')

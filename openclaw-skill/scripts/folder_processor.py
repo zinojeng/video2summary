@@ -449,7 +449,7 @@ def _analyze_slides_direct(images: list[Path], output_file: Path, api_key: str) 
                             }}
                         ]}
                     ],
-                    max_tokens=1500
+                    max_completion_tokens=1500
                 )
 
                 f.write(f"{response.choices[0].message.content}\n\n---\n\n")

@@ -25,8 +25,6 @@ DEFAULT_TARGET="."
 MODEL_OPTIONS=(
   "gpt-transcribe"
   "gemini-3.5-transcribe"
-  "gpt-4o-mini-transcribe"
-  "whisper-1"
   "gemini-3.7-flash"
   "gemini-3.5-flash-lite"
 )
@@ -88,7 +86,6 @@ prompt_model_selection() {
     echo "  1) gpt-transcribe (OpenAI current recommended) - RECOMMENDED"
     echo "  2) gemini-3.5-transcribe (Speaker labels + word timestamps)"
     echo "  3) gpt-4o-mini-transcribe (Legacy, cheaper)"
-    echo "  4) whisper-1 (Legacy OpenAI word timestamps)"
     echo "  5) gemini-3.7-flash (Gemini text model)"
     echo "  6) gemini-3.5-flash-lite (Gemini, cheapest)"
     read -rp "Enter number (Default 1): " choice
@@ -98,8 +95,6 @@ prompt_model_selection() {
       2) SELECTED_MODEL="${MODEL_OPTIONS[1]}"; break ;;
       3) SELECTED_MODEL="${MODEL_OPTIONS[2]}"; break ;;
       4) SELECTED_MODEL="${MODEL_OPTIONS[3]}"; break ;;
-      5) SELECTED_MODEL="${MODEL_OPTIONS[4]}"; break ;;
-      6) SELECTED_MODEL="${MODEL_OPTIONS[5]}"; break ;;
       *) echo "Invalid input, please try again." ;;
     esac
   done

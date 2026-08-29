@@ -87,8 +87,7 @@ def test_openai_transcription(file_path, api_key):
     
     # 測試不同的模型
     models = [
-        ("gpt-4o-transcribe", "GPT-4o 轉錄模型"),
-        ("whisper-1", "Whisper 模型")
+        ("gpt-transcribe", "OpenAI 轉錄模型"),
     ]
     
     for model_name, model_desc in models:

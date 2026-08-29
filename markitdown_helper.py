@@ -197,7 +197,7 @@ def convert_images_to_markdown(
                                             ]
                                         }
                                     ],
-                                    max_tokens=1000
+                                    max_completion_tokens=1000
                                 )
                                 
                                 # 寫入分析結果
