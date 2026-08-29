@@ -25,6 +25,13 @@ from datetime import datetime
 
 from llm_provider_kit import OPENAI_VISION
 
+# markitdown_helper / improved_slide_capture 等共用模組在專案根目錄，
+# 不是安裝的套件，從別的目錄執行時要先把根目錄放進 path。
+_REPO_ROOT = str(Path(__file__).resolve().parents[2])
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
+
 AUDIO_DIR = Path.home() / "audio"
 SKILL_DIR = Path.home() / ".openclaw" / "workspace" / "skills" / "audio-transcribe" / "scripts"
 PYTHON = SKILL_DIR / "venv" / "bin" / "python3"

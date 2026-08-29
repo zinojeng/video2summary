@@ -16,8 +16,16 @@ from typing import List, Dict, Tuple, Optional
 from datetime import datetime
 
 # 導入 Gemini 版本的 markitdown 輔助模組
+# markitdown_helper / improved_slide_capture 等共用模組在專案根目錄，
+# 不是安裝的套件，從別的目錄執行時要先把根目錄放進 path。
+_REPO_ROOT = str(Path(__file__).resolve().parents[2])
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
 from markitdown_helper_gemini import convert_images_to_markdown_gemini
 from llm_provider_kit import GEMINI_VISION, GEMINI_NOTES
+
+
 
 
 class BatchSlidesAnalyzer:

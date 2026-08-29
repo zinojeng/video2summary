@@ -10,8 +10,16 @@ import sys
 import json
 import time
 from pathlib import Path
+# markitdown_helper / improved_slide_capture 等共用模組在專案根目錄，
+# 不是安裝的套件，從別的目錄執行時要先把根目錄放進 path。
+_REPO_ROOT = str(Path(__file__).resolve().parents[2])
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
 from markitdown_helper import convert_images_to_markdown
 from llm_provider_kit import OPENAI_VISION
+
+
 
 
 def process_full_slides_folder(folder_path, api_key, model=OPENAI_VISION):

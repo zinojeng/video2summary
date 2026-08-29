@@ -61,14 +61,16 @@ ssh "${USER}@${MAC_MINI}" "
     cd ${REMOTE_SKILL_DIR}/scripts
     if [ -d venv ]; then
         source venv/bin/activate
-        pip install -q google-generativeai openai 2>&1 | tail -3
+        pip install -q openai \
+            'llm-provider-kit @ https://github.com/zinojeng/llm-provider-kit/archive/refs/heads/main.tar.gz' \
+            2>&1 | tail -3
         echo '✅ Python 依賴已安裝'
     else
         echo '⚠️ 找不到 venv，請先建立：'
         echo '  cd ${REMOTE_SKILL_DIR}/scripts'
         echo '  python3 -m venv venv'
         echo '  source venv/bin/activate'
-        echo '  pip install openai google-generativeai'
+        echo '  pip install openai llm-provider-kit@https://github.com/zinojeng/llm-provider-kit/archive/refs/heads/main.tar.gz'
     fi
 "
 
