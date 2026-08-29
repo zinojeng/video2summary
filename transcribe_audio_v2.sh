@@ -83,11 +83,10 @@ prompt_model_selection() {
   local choice
   while true; do
     echo "Select Model to Use:"
-    echo "  1) gpt-transcribe (OpenAI current recommended) - RECOMMENDED"
-    echo "  2) gemini-3.5-transcribe (Speaker labels + word timestamps)"
-    echo "  3) gpt-4o-mini-transcribe (Legacy, cheaper)"
-    echo "  5) gemini-3.7-flash (Gemini text model)"
-    echo "  6) gemini-3.5-flash-lite (Gemini, cheapest)"
+    echo "  1) gpt-transcribe (best text accuracy) - RECOMMENDED"
+    echo "  2) gemini-3.5-transcribe (speaker labels + real word timestamps)"
+    echo "  3) gemini-3.7-flash (Gemini text model)"
+    echo "  4) gemini-3.5-flash-lite (Gemini, cheapest)"
     read -rp "Enter number (Default 1): " choice
     [ -z "$choice" ] && choice=1
     case "$choice" in

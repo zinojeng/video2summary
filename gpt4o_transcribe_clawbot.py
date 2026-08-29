@@ -20,7 +20,8 @@ from pathlib import Path
 from openai import OpenAI
 
 from model_config import OPENAI_TRANSLATION
-from gpt4o_transcribe_improved import resolve_translation_model
+from gemini_transcribe import is_gemini_transcribe_model
+from gpt4o_transcribe_improved import resolve_transcribe_model, resolve_translation_model
 import math
 
 
@@ -244,7 +245,21 @@ class AudioTranscriber:
             
         print(f"[Model] Using model: {model}")
 
-        # Gemini Model Handling
+        # gemini-3.5-transcribe 走的是 interactions 轉錄 API，
+        # 不能丟給文字模型的 generate_content。
+        if is_gemini_transcribe_model(model):
+            from gemini_transcribe import GeminiTranscriber
+
+            gemini = GeminiTranscriber(
+                os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+            )
+            return gemini.transcribe_file(
+                file_path,
+                language=language,
+                model=model,
+            )
+
+        # 其餘 Gemini 文字/多模態模型
         if "gemini" in model.lower():
             from gemini_client import GeminiTextModel
 
@@ -358,8 +373,7 @@ class AudioTranscriber:
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
-                ],
-                temperature=0.3
+                ]
             )
             return response.choices[0].message.content.strip()
         except Exception as e:
@@ -427,8 +441,7 @@ Rules:
                         messages=[
                             {"role": "system", "content": system_prompt},
                             {"role": "user", "content": user_prompt}
-                        ],
-                        temperature=0.3
+                        ]
                     )
                     result = response.choices[0].message.content.strip()
                 
@@ -947,6 +960,11 @@ def main():
     parser.add_argument("--cleanup", action="store_true", help="完成後清理暫存檔案")
     
     args = parser.parse_args()
+
+    resolved = resolve_transcribe_model(args.model)
+    if resolved != args.model:
+        print(f"提示：{args.model} 已非建議模型，改用 {resolved}")
+        args.model = resolved
 
     if args.max_segment_seconds <= 0:
         print("錯誤：max-segment-seconds 需為正整數")

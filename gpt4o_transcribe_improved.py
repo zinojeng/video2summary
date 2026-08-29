@@ -576,8 +576,7 @@ class AudioTranscriber:
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
-                ],
-                temperature=0.3
+                ]
             )
             return response.choices[0].message.content.strip()
         except Exception as e:
@@ -643,8 +642,7 @@ Rules:
                         messages=[
                             {"role": "system", "content": system_prompt},
                             {"role": "user", "content": user_prompt}
-                        ],
-                        temperature=0.3
+                        ]
                     )
                     result = response.choices[0].message.content.strip()
                 
