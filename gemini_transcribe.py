@@ -15,6 +15,9 @@ Gemini 3.5 Transcribe 轉錄後端。
 - 需要新的 `google-genai` SDK（`pip install google-genai`），呼叫的是
   `client.interactions.create`，跟舊的 `google.generativeai` 完全不同。
 - smart 模式與時間戳/diarization 互斥；要講者標記就必須用 verbatim。
+- 實測（官方文件未載明）：custom_vocabulary 與 diarization、與詞級時間戳
+  都互斥，三者只能擇一；且只開 diarization 而不開時間戳會拿到 0 筆標註，
+  等於沒有講者標記，因為講者資訊是掛在 word 標註上的。
 - 單次上限 1 小時；開了 diarization 或詞級時間戳則降為 30 分鐘。
 
 文件：https://ai.google.dev/gemini-api/docs/transcribe
@@ -39,10 +42,10 @@ MAX_CUSTOM_VOCABULARY = 1000
 
 # 本專案內部用的語言代碼 -> Gemini 官方文件列出的 BCP-47 代碼。
 #
-# 注意：官方支援清單裡的華語只有 cmn-Hans-CN（簡體中文普通話）與
-# yue-Hant-HK（繁體粵語），沒有 zh-TW / zh-CN。所以國語一律送
-# cmn-Hans-CN，辨識結果可能是簡體；要繁體請用 --translate zh-tw
-# 讓後續翻譯步驟轉換。
+# 注意：官方支援清單裡的華語只有 cmn-Hans-CN（普通話）與
+# yue-Hant-HK（粵語），沒有 zh-TW / zh-CN，送不在清單裡的代碼會被拒絕。
+# 代碼名稱雖然帶 Hans，實測輸出仍是繁體；若某次拿到簡體，用
+# --translate zh-tw 轉換。
 # https://ai.google.dev/gemini-api/docs/transcribe#supported-languages
 _LANGUAGE_CODE_MAP = {
     "zh": "cmn-Hans-CN",
@@ -100,8 +103,8 @@ def to_bcp47(language: Optional[str]) -> list[str]:
     if not normalized or normalized == "auto":
         return []
     if normalized in _SIMPLIFIED_OUTPUT_HINT:
-        print("[Note] Gemini 的華語辨識代碼為 cmn-Hans-CN，轉錄可能輸出簡體；"
-              "需要繁體請加 --translate zh-tw")
+        print("[Note] Gemini 的華語辨識代碼為 cmn-Hans-CN（官方清單無 zh-TW）；"
+              "若輸出為簡體可加 --translate zh-tw 轉換")
     return [_LANGUAGE_CODE_MAP.get(normalized, language)]
 
 
@@ -390,6 +393,26 @@ class GeminiTranscriber:
         """
         config: dict[str, Any] = {"language_codes": to_bcp47(language)}
 
+        # 實測得到的限制（官方文件沒寫）：
+        #   - custom_vocabulary 與 diarization 互斥
+        #   - custom_vocabulary 與 timestamps 互斥
+        #   - 只開 diarization 不開 timestamps 會拿到 0 筆 word 標註，
+        #     等於沒有講者標記；講者資訊是掛在 word 標註上的
+        if diarization and not word_timestamps:
+            print("[Note] 講者標記需要詞級時間戳才會有輸出，已一併開啟")
+            word_timestamps = True
+
+        wants_annotations = diarization or word_timestamps
+
+        if keywords and wants_annotations:
+            print(
+                "[Warn] custom_vocabulary 無法與講者標記/詞級時間戳並用（API 限制），"
+                "本次忽略 keywords。\n"
+                "       若專有名詞比講者標記重要，請加 "
+                "--no-diarization --no-word-timestamps"
+            )
+            keywords = None
+
         if keywords:
             vocabulary = [k.strip() for k in keywords if k and k.strip()]
             if len(vocabulary) > MAX_CUSTOM_VOCABULARY:
@@ -401,7 +424,7 @@ class GeminiTranscriber:
             if vocabulary:
                 config["custom_vocabulary"] = vocabulary
 
-        if diarization or word_timestamps:
+        if wants_annotations:
             mode: dict[str, Any] = {"type": "verbatim"}
             if diarization:
                 mode["diarization_mode"] = "speaker"
@@ -444,6 +467,10 @@ class GeminiTranscriber:
             diarization=diarization,
             word_timestamps=word_timestamps,
         )
+        # build_transcription_config 可能會把 word_timestamps 補開，
+        # 這裡以實際送出的 config 為準來判斷該不該期待標註。
+        mode = transcription_config.get("mode")
+        expects_annotations = isinstance(mode, dict)
 
         interaction = self.client.interactions.create(
             model=model,
@@ -459,7 +486,7 @@ class GeminiTranscriber:
             text = segments_to_text(segments, include_speakers=diarization)
         else:
             text = getattr(interaction, "output_text", "") or ""
-            if word_timestamps or diarization:
+            if expects_annotations:
                 print(
                     "[Warn] 回應中沒有 word_info 標註，"
                     "講者標記與詞級時間戳不可用（將退回估算時間軸）"

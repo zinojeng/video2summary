@@ -35,6 +35,9 @@ DEFAULT_TRANSCRIBE_MODEL = "gpt-transcribe"
 # OpenAI 路徑的預設分段長度（秒）。25MB 上限下 10 分鐘是安全值。
 DEFAULT_OPENAI_SEGMENT_SECONDS = 600
 
+# 短於這個長度的尾段視為切割碎片，不送去轉錄。
+MIN_SEGMENT_SECONDS = 1.0
+
 # 只有新一代模型支援 keywords（專有名詞字面提示）。
 KEYWORDS_SUPPORTED_MODELS = {"gpt-transcribe", "gpt-live-transcribe"}
 
@@ -379,6 +382,20 @@ class AudioTranscriber:
                 'start': start_time,
                 'duration': segment_duration_value
             })
+
+        # ffmpeg 的 -f segment 會把餘數切成獨立的一段，可能只有零點幾秒。
+        # 這種碎片沒有內容，Gemini 會直接回 400，OpenAI 則是白花一次請求。
+        # 丟掉它比送出去好；它涵蓋的時間不足一秒，不影響逐字稿。
+        if len(segments) > 1:
+            tail = segments[-1]
+            tail_duration = self.get_audio_duration(tail['path'])
+            if tail_duration is not None and tail_duration < MIN_SEGMENT_SECONDS:
+                print(f"  末段僅 {tail_duration:.2f} 秒，過短已略過")
+                try:
+                    os.remove(tail['path'])
+                except OSError:
+                    pass
+                segments.pop()
 
         return segments, str(base_dir)
 
@@ -1143,7 +1160,8 @@ Rules:
                      if isinstance(txt, str) and not txt.strip() == "":
                          if key == 'original':
                              print(f"[Warn] 模型 {model} 未回傳 segment 時間戳，"
-                                   f"SRT 時間軸為估算值；需要精準時間戳請改用 --model whisper-1")
+                                   f"SRT 時間軸為估算值；需要精準時間戳請改用 "
+                                   f"--model gemini-3.5-transcribe 或 --model whisper-1")
                          final_text_map[key] = self.generate_srt_fallback(
                              txt, audio_duration=duration
                          )
