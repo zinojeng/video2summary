@@ -24,6 +24,7 @@ DEFAULT_TARGET="."
 
 MODEL_OPTIONS=(
   "gpt-transcribe"
+  "gemini-3.5-transcribe"
   "gpt-4o-mini-transcribe"
   "whisper-1"
   "gemini-3-flash-preview"
@@ -38,11 +39,16 @@ FORMAT_OPTIONS=(
 
 # AUDIO_EXTENSIONS will be set in prompt_file_type_selection
 
-SEGMENT_SECONDS="${TRANSCRIBE_SEGMENT_SECONDS:-600}"
+# 留空表示交給 Python 依模型挑預設值（OpenAI 600s、Gemini 1800s）。
+# 只有使用者明確設了 TRANSCRIBE_SEGMENT_SECONDS 才覆寫。
+SEGMENT_SECONDS="${TRANSCRIBE_SEGMENT_SECONDS:-}"
 REQUEST_TIMEOUT="${TRANSCRIBE_REQUEST_TIMEOUT:-90}"
 
-if ! [[ "$SEGMENT_SECONDS" =~ ^[0-9]+$ ]] || [ "$SEGMENT_SECONDS" -le 0 ]; then
-  SEGMENT_SECONDS=600
+if [ -n "$SEGMENT_SECONDS" ]; then
+  if ! [[ "$SEGMENT_SECONDS" =~ ^[0-9]+$ ]] || [ "$SEGMENT_SECONDS" -le 0 ]; then
+    echo "警告：TRANSCRIBE_SEGMENT_SECONDS 不是正整數，改用模型預設值" >&2
+    SEGMENT_SECONDS=""
+  fi
 fi
 
 load_dotenv_file() {
@@ -80,10 +86,11 @@ prompt_model_selection() {
   while true; do
     echo "Select Model to Use:"
     echo "  1) gpt-transcribe (OpenAI current recommended) - RECOMMENDED"
-    echo "  2) gpt-4o-mini-transcribe (Legacy, cheaper)"
-    echo "  3) whisper-1 (Legacy, only model with word timestamps)"
-    echo "  4) gemini-3-flash-preview (Gemini 3 Flash)"
-    echo "  5) gemini-2.5-flash (Gemini 2.5 Flash)"
+    echo "  2) gemini-3.5-transcribe (Speaker labels + word timestamps)"
+    echo "  3) gpt-4o-mini-transcribe (Legacy, cheaper)"
+    echo "  4) whisper-1 (Legacy OpenAI word timestamps)"
+    echo "  5) gemini-3-flash-preview (Gemini 3 Flash)"
+    echo "  6) gemini-2.5-flash (Gemini 2.5 Flash)"
     read -rp "Enter number (Default 1): " choice
     [ -z "$choice" ] && choice=1
     case "$choice" in
@@ -92,6 +99,7 @@ prompt_model_selection() {
       3) SELECTED_MODEL="${MODEL_OPTIONS[2]}"; break ;;
       4) SELECTED_MODEL="${MODEL_OPTIONS[3]}"; break ;;
       5) SELECTED_MODEL="${MODEL_OPTIONS[4]}"; break ;;
+      6) SELECTED_MODEL="${MODEL_OPTIONS[5]}"; break ;;
       *) echo "Invalid input, please try again." ;;
     esac
   done
@@ -338,11 +346,18 @@ run_transcription() {
   fi
 
   echo "▶︎ Transcribing: ${audio_file}"
+  # macOS 的 /bin/bash 是 3.2，配上 set -u 時展開空陣列會直接中止腳本，
+  # 所以下面用 ${arr[@]+"${arr[@]}"} 這個 3.2 也安全的寫法。
+  local segment_args=()
+  if [ -n "$SEGMENT_SECONDS" ]; then
+    segment_args=(--max-segment-seconds "$SEGMENT_SECONDS")
+  fi
+
   python "$PYTHON_ENTRY" "$audio_file" \
     --model "$SELECTED_MODEL" \
     --language "$SELECTED_LANGUAGE" \
     --format "$SELECTED_FORMAT" \
-    --max-segment-seconds "$SEGMENT_SECONDS" \
+    ${segment_args[@]+"${segment_args[@]}"} \
     --request-timeout "$REQUEST_TIMEOUT" \
     --output "$output_file" \
     $TRANSLATE_ARGS \
@@ -454,12 +469,16 @@ main() {
   local target_input="${1:-}";
   resolve_target_path "$target_input"
 
-  local segment_minutes
-  segment_minutes=$((SEGMENT_SECONDS / 60))
-  if [ $segment_minutes -eq 0 ]; then
-    segment_minutes=1
+  if [ -n "$SEGMENT_SECONDS" ]; then
+    local segment_minutes
+    segment_minutes=$((SEGMENT_SECONDS / 60))
+    if [ $segment_minutes -eq 0 ]; then
+      segment_minutes=1
+    fi
+    echo "Max segment duration: ${SEGMENT_SECONDS}s (~${segment_minutes} min)"
+  else
+    echo "Max segment duration: model default (OpenAI 600s / Gemini 1800s)"
   fi
-  echo "Max segment duration: ${SEGMENT_SECONDS}s (~${segment_minutes} min)"
 
   PROCESSED_COUNT=0
   SKIPPED_FILE_COUNT=0

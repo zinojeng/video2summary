@@ -23,11 +23,13 @@ def transcribe_audio_gpt4o(
     language: Optional[str] = "zh",
     output_format: str = "text",
     auto_convert: bool = True,
-    segment_duration: int = 600,
+    segment_duration: Optional[int] = None,
     request_timeout: int = 90,
     progress_callback: Optional[Callable[[str, float], None]] = None,
     keywords: Optional[Sequence[str]] = None,
     allow_legacy_model: bool = False,
+    diarization: bool = True,
+    word_timestamps: bool = True,
 ):
     """使用 GPT-4o 模型轉錄音訊。
 
@@ -56,6 +58,8 @@ def transcribe_audio_gpt4o(
         request_timeout=request_timeout,
         progress_callback=progress_callback,
         keywords=list(keywords) if keywords else None,
+        diarization=diarization,
+        word_timestamps=word_timestamps,
     )
 
 

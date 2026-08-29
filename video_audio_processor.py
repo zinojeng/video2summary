@@ -795,6 +795,11 @@ class VideoAudioProcessor:
             variable=self.transcribe_model_var, value="whisper-1"
         ).pack(side=tk.LEFT, padx=5)
         
+        tk.Radiobutton(
+            model_frame, text="Gemini 3.5 (講者標記+時間戳)", 
+            variable=self.transcribe_model_var, value="gemini-3.5-transcribe"
+        ).pack(side=tk.LEFT, padx=5)
+        
         # 輸出格式選擇
         format_frame2 = tk.Frame(frame)
         format_frame2.pack(fill=tk.X, pady=5)
@@ -971,7 +976,17 @@ class VideoAudioProcessor:
             if api_key:
                 self.saved_api_key = api_key
         
-        if not api_key:
+        selected_model = self.transcribe_model_var.get()
+        if selected_model.startswith("gemini-3.5-transcribe"):
+            # Gemini 後端用的是 Google 金鑰，不需要 OpenAI 金鑰
+            if not (os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")):
+                messagebox.showwarning(
+                    "警告",
+                    "使用 Gemini 3.5 Transcribe 需要設定環境變數\n"
+                    "GEMINI_API_KEY 或 GOOGLE_API_KEY"
+                )
+                return
+        elif not api_key:
             messagebox.showwarning("警告", "請輸入 OpenAI API Key")
             self.transcribe_api_key_entry.focus_set()
             return
@@ -1080,7 +1095,15 @@ class VideoAudioProcessor:
         return "\n".join(lines)
 
     def transcribe_audio_to_text(self, file_path, api_key, model="gpt-transcribe", output_format="text", progress_callback=None):
-        """使用 GPT-4o 模型轉錄音訊並回傳文字。"""
+        """轉錄音訊並回傳文字。"""
+        # Gemini 後端用的是 GEMINI_API_KEY，不是畫面上填的 OpenAI 金鑰
+        if model.startswith("gemini-3.5-transcribe"):
+            if not (os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")):
+                raise Exception(
+                    "使用 Gemini 3.5 Transcribe 需要設定環境變數 "
+                    "GEMINI_API_KEY 或 GOOGLE_API_KEY"
+                )
+
         try:
             # 先嘗試使用與參考專案介面一致的模組
             try:

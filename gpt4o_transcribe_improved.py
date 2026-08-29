@@ -20,10 +20,20 @@ from pathlib import Path
 from openai import OpenAI
 import math
 
+from gemini_transcribe import (
+    GEMINI_TEXT_MODEL,
+    GEMINI_TRANSCRIBE_MODEL,
+    is_gemini_transcribe_model,
+    max_segment_seconds,
+)
+
 
 # OpenAI 目前推薦的檔案轉錄模型。gpt-4o-transcribe / gpt-4o-mini-transcribe
 # 已被官方標示為「現有整合可續用，但不建議新專案採用」。
 DEFAULT_TRANSCRIBE_MODEL = "gpt-transcribe"
+
+# OpenAI 路徑的預設分段長度（秒）。25MB 上限下 10 分鐘是安全值。
+DEFAULT_OPENAI_SEGMENT_SECONDS = 600
 
 # 只有新一代模型支援 keywords（專有名詞字面提示）。
 KEYWORDS_SUPPORTED_MODELS = {"gpt-transcribe", "gpt-live-transcribe"}
@@ -33,6 +43,34 @@ LEGACY_MODEL_ALIASES = {
     "gpt-4o-transcribe": "gpt-transcribe",
     "gpt-4o-mini-transcribe": "gpt-transcribe",
 }
+
+
+# 這些是「只能轉錄」的模型，不能拿來做翻譯這種文字生成。
+TRANSCRIBE_ONLY_MODELS = {
+    "gpt-transcribe",
+    "gpt-live-transcribe",
+    "gpt-4o-transcribe",
+    "gpt-4o-mini-transcribe",
+    "gpt-4o-transcribe-diarize",
+    "whisper-1",
+}
+
+DEFAULT_OPENAI_TEXT_MODEL = "gpt-4o"
+
+
+def resolve_translation_model(transcribe_model):
+    """依轉錄模型所屬的供應商，挑一顆能做文字生成的翻譯模型。
+
+    轉錄模型本身不能做翻譯；直接把它當文字模型送出去會被 API 拒絕，
+    或（更糟）被丟到錯誤的供應商去。
+    """
+    model = (transcribe_model or "").lower()
+    if is_gemini_transcribe_model(model):
+        return GEMINI_TEXT_MODEL
+    if model in TRANSCRIBE_ONLY_MODELS or not model:
+        return DEFAULT_OPENAI_TEXT_MODEL
+    # gemini-2.5-flash 這類本來就是文字模型，沿用即可
+    return transcribe_model
 
 
 def resolve_transcribe_model(model, allow_legacy=False):
@@ -49,13 +87,29 @@ class AudioTranscriber:
     """音頻轉錄處理器"""
 
     SUPPORTED_FORMATS = {'.mp3', '.mp4', '.mpeg', '.mpga', '.m4a', '.wav', '.webm'}
+    # Gemini 的 Files API 另外吃這些格式，走該後端時不必先轉檔
+    GEMINI_EXTRA_FORMATS = {'.flac', '.ogg', '.aac'}
     # 高相容性格式：這些格式不需要轉換，OpenAI API 直接支援
     HIGH_COMPAT_FORMATS = {'.mp3', '.m4a', '.wav'}
     VIDEO_FORMATS = {'.mp4', '.mov', '.mkv', '.avi', '.webm'}
     MAX_FILE_SIZE = 25 * 1024 * 1024  # 25 MB
 
     def __init__(self, api_key):
-        self.client = OpenAI(api_key=api_key)
+        # 延遲建立 OpenAI client：走 Gemini 後端時使用者不該被強迫提供
+        # OpenAI 金鑰，但仍然共用本類別的分段/轉檔/續傳流程。
+        self._api_key = api_key
+        self._client = None
+
+    @property
+    def client(self):
+        if self._client is None:
+            if not self._api_key:
+                raise ValueError(
+                    "使用 OpenAI 模型需要 API key；"
+                    "若要用 Gemini 請選擇 gemini-3.5-transcribe 並設定 GEMINI_API_KEY"
+                )
+            self._client = OpenAI(api_key=self._api_key)
+        return self._client
 
     def log_stage(self, message: str):
         """輸出階段提示"""
@@ -337,6 +391,9 @@ class AudioTranscriber:
         request_timeout=90,
         prompt_context=None,
         keywords=None,
+        diarization=True,
+        word_timestamps=True,
+        time_offset=0.0,
     ):
         """轉錄單個音頻檔案
 
@@ -354,6 +411,24 @@ class AudioTranscriber:
             file_name = file_name + ".mp3"
             
         print(f"[Model] Using model: {model}")
+
+        # gemini-3.5-transcribe：唯一同時提供講者標記與詞級時間戳的後端。
+        # 走的是新的 google-genai SDK，與下面舊 Gemini 分支完全不同的 API。
+        if is_gemini_transcribe_model(model):
+            from gemini_transcribe import GeminiTranscriber
+
+            gemini = GeminiTranscriber(
+                os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+            )
+            return gemini.transcribe_file(
+                file_path,
+                language=language,
+                keywords=keywords,
+                diarization=diarization,
+                word_timestamps=word_timestamps,
+                time_offset=time_offset,
+                model=model,
+            )
 
         # Gemini Model Handling
         if "gemini" in model.lower():
@@ -480,34 +555,22 @@ class AudioTranscriber:
 
         print(f"[Translation] Translating to {target_lang_name}...")
 
-        # Gemini
-        if "gemini" in model.lower():
-            import google.generativeai as genai
-            try:
-                # Reuse Gemini configuration logic or check if configured
-                gemini_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-                if gemini_key:
-                     genai.configure(api_key=gemini_key)
-                
-                # Use a specific text model for translation if needed, or the same model
-                # For safety, use a known text model or the same one passed in (if text-capable)
-                # Let's try to use the model passed in, but strip 'transcribe' if present or use a sturdy one
-                # Actually, gemini-1.5-flash is good for this.
-                trans_model_name = "models/gemini-1.5-flash"
-                if "gemini" in model:
-                     trans_model_name = model if model.startswith("models/") else f"models/{model}"
+        # 轉錄模型不能做文字生成，這裡換成同供應商的文字模型
+        trans_model = resolve_translation_model(model)
 
-                gemini_model = genai.GenerativeModel(trans_model_name)
-                response = gemini_model.generate_content(f"{system_prompt}\n\nText:\n{user_prompt}")
-                return response.text.strip()
+        # Gemini
+        if "gemini" in trans_model.lower():
+            from gemini_transcribe import generate_text
+            try:
+                return generate_text(
+                    f"{system_prompt}\n\nText:\n{user_prompt}", model=trans_model
+                )
             except Exception as e:
                 print(f"Gemini Translation Error: {e}")
                 return text # Fallback to original
 
         # OpenAI
         try:
-            # Use gpt-4o for high quality translation
-            trans_model = "gpt-4o"
             response = self.client.chat.completions.create(
                 model=trans_model,
                 messages=[
@@ -538,6 +601,9 @@ class AudioTranscriber:
         }
         target_lang_name = lang_name_map.get(target_lang.lower(), target_lang)
 
+        # 轉錄模型不能做文字生成，換成同供應商的文字模型
+        trans_model = resolve_translation_model(model)
+
         # Extract texts
         texts = [seg['text'].replace('\n', ' ') for seg in segments]
         
@@ -565,18 +631,22 @@ Rules:
             user_prompt = f"Lines to translate:\n{prompt_text}"
             
             try:
-                # Use translate_text logic (or call API directly)
-                # We can reuse client.chat.completions
-                # 使用傳入的 model 參數，預設為 gpt-4o
-                response = self.client.chat.completions.create(
-                    model=model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt}
-                    ],
-                    temperature=0.3
-                )
-                result = response.choices[0].message.content.strip()
+                # 轉錄模型不能做文字生成，且必須送到對的供應商去
+                if "gemini" in trans_model.lower():
+                    from gemini_transcribe import generate_text
+                    result = generate_text(
+                        f"{system_prompt}\n\n{user_prompt}", model=trans_model
+                    )
+                else:
+                    response = self.client.chat.completions.create(
+                        model=trans_model,
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt}
+                        ],
+                        temperature=0.3
+                    )
+                    result = response.choices[0].message.content.strip()
                 
                 # Parse result
                 lines = result.split('\n')
@@ -614,14 +684,19 @@ Rules:
         language="zh",
         output_format="text",
         auto_convert=True,
-        segment_duration=600,
+        segment_duration=None,
         request_timeout=90,
         translate_langs=None,
         cleanup=False,
         progress_callback=None,
         keywords=None,
+        diarization=True,
+        word_timestamps=True,
     ):
         """主要轉錄功能，處理所有邏輯
+
+        diarization / word_timestamps 只對 gemini-3.5-transcribe 有效，
+        OpenAI 的模型會忽略這兩個參數。
 
         progress_callback: Optional[Callable[[str, float], None]]
             If provided, called with (status_message, fraction 0.0-1.0) at each stage.
@@ -667,8 +742,18 @@ Rules:
 
             # 智慧格式轉換：只在格式不支援或非高相容性格式時才轉換
             # 高相容性格式 (.mp3, .m4a, .wav) 可直接使用，節省轉換時間
-            needs_convert = not audio_info['supported']
-            if auto_convert and audio_info['extension'] not in self.HIGH_COMPAT_FORMATS:
+            #
+            # Gemini 的 Files API 原生吃 flac/ogg/aac，多轉一次只會掉品質又
+            # 需要 ffmpeg，所以那些格式在 Gemini 後端視為高相容性。
+            high_compat = set(self.HIGH_COMPAT_FORMATS)
+            if is_gemini_transcribe_model(model):
+                high_compat |= self.GEMINI_EXTRA_FORMATS
+
+            needs_convert = (
+                audio_info['extension'] not in high_compat
+                and not audio_info['supported']
+            )
+            if auto_convert and audio_info['extension'] not in high_compat:
                 needs_convert = True
 
             if needs_convert:
@@ -687,9 +772,27 @@ Rules:
             if duration:
                 print(f"  音訊長度: {duration:.1f} 秒 ({duration/60:.1f} 分鐘)")
 
-            needs_split = audio_info['too_large']
-            if duration and segment_duration:
-                needs_split = needs_split or duration > segment_duration
+            if is_gemini_transcribe_model(model):
+                # Gemini 用 Files API 上傳，沒有 25MB 限制；真正的限制是
+                # 單次請求的音訊長度（開了講者標記/詞級時間戳為 30 分鐘）。
+                gemini_limit = max_segment_seconds(diarization, word_timestamps)
+                if not segment_duration:
+                    segment_duration = gemini_limit
+                elif segment_duration > gemini_limit:
+                    print(f"[Gemini] 分段長度 {segment_duration}s 超過 API 上限，"
+                          f"調整為 {gemini_limit}s")
+                    segment_duration = gemini_limit
+                if segment_duration >= 60:
+                    print(f"[Gemini] 分段長度：{segment_duration / 60:.0f} 分鐘")
+                else:
+                    print(f"[Gemini] 分段長度：{segment_duration} 秒")
+                needs_split = bool(duration and duration > segment_duration)
+            else:
+                if not segment_duration:
+                    segment_duration = DEFAULT_OPENAI_SEGMENT_SECONDS
+                needs_split = audio_info['too_large']
+                if duration:
+                    needs_split = needs_split or duration > segment_duration
 
             # 分段快取的識別碼：模型或 keywords 改變時，舊的 segment 轉錄
             # 結果就不能再沿用。
@@ -697,6 +800,10 @@ Rules:
                 'model': model,
                 'language': language,
                 'keywords': sorted(keywords) if keywords else None,
+                'diarization': bool(diarization) if is_gemini_transcribe_model(model) else None,
+                'word_timestamps': bool(word_timestamps) if is_gemini_transcribe_model(model) else None,
+                # 分段長度改變 -> 切點改變 -> 舊段落的音訊範圍完全不同
+                'segment_duration': segment_duration,
             }
 
             final_text_map = {'original': ""}
@@ -777,7 +884,9 @@ Rules:
                                 "text",
                                 request_timeout=request_timeout,
                                 prompt_context=last_transcript_tail,
-                                keywords=keywords
+                                keywords=keywords,
+                                diarization=diarization,
+                                word_timestamps=word_timestamps
                             )
                             
                             transcript_text = ""
@@ -961,6 +1070,8 @@ Rules:
                     resp_format, # Use corrected output format
                     request_timeout=request_timeout,
                     keywords=keywords,
+                    diarization=diarization,
+                    word_timestamps=word_timestamps,
                 )
                 
                 final_text = ""
@@ -1187,6 +1298,10 @@ def main():
                        help="專有名詞提示，用逗號分隔 (例如: HbA1c,GLP-1,dapagliflozin)")
     parser.add_argument("--allow-legacy-model", action="store_true",
                        help="不要把 gpt-4o-transcribe 等舊模型自動改寫為 gpt-transcribe")
+    parser.add_argument("--no-diarization", action="store_true",
+                       help="關閉講者標記（僅 gemini-3.5-transcribe 支援）")
+    parser.add_argument("--no-word-timestamps", action="store_true",
+                       help="關閉詞級時間戳（僅 gemini-3.5-transcribe 支援）")
     parser.add_argument("--language", default="zh", help="語言代碼")
     parser.add_argument("--format", default="text",
                        choices=["text", "markdown", "srt"],
@@ -1194,8 +1309,9 @@ def main():
     parser.add_argument("--no-convert", action="store_true",
                        help="不自動轉換音頻格式")
     parser.add_argument("--output", help="輸出檔案路徑（預設輸出到終端）")
-    parser.add_argument("--max-segment-seconds", type=int, default=600,
-                       help="分段長度（秒），預設 600 秒 (10 分鐘)")
+    parser.add_argument("--max-segment-seconds", type=int, default=None,
+                       help="分段長度（秒）。預設 OpenAI 600 秒 (10 分鐘)、"
+                            "gemini-3.5-transcribe 1800 秒 (30 分鐘)")
     parser.add_argument("--request-timeout", type=int, default=90,
                        help="OpenAI API 請求逾時秒數 (預設 90 秒)")
     parser.add_argument("--translate", help="翻譯語言，用逗號分隔 (例如: en,zh-tw)")
@@ -1213,7 +1329,7 @@ def main():
     if args.keywords:
         keywords = [k.strip() for k in args.keywords.split(',') if k.strip()]
 
-    if args.max_segment_seconds <= 0:
+    if args.max_segment_seconds is not None and args.max_segment_seconds <= 0:
         print("錯誤：max-segment-seconds 需為正整數")
         sys.exit(1)
         
@@ -1223,7 +1339,13 @@ def main():
         print(f"啟用翻譯模式：{translate_langs}")
     
     # 檢查 API key
-    if "gemini" not in args.model.lower():
+    if is_gemini_transcribe_model(args.model):
+        if not (os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")):
+            print("錯誤：使用 gemini-3.5-transcribe 請設定環境變數 "
+                  "GEMINI_API_KEY 或 GOOGLE_API_KEY")
+            sys.exit(1)
+        api_key = "dummy"  # OpenAI client 不會被用到，僅為滿足 __init__
+    elif "gemini" not in args.model.lower():
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
             print("錯誤：使用 OpenAI 模型請設定環境變數 OPENAI_API_KEY")
@@ -1255,7 +1377,9 @@ def main():
             request_timeout=args.request_timeout,
             translate_langs=translate_langs,
             cleanup=args.cleanup,
-            keywords=keywords
+            keywords=keywords,
+            diarization=not args.no_diarization,
+            word_timestamps=not args.no_word_timestamps
         )
         
         # 處理輸出
