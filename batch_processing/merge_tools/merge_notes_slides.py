@@ -13,18 +13,16 @@ import re
 import time
 from pathlib import Path
 from typing import List, Dict, Tuple, Optional
-import google.generativeai as genai
 from datetime import datetime
 # 讓子目錄下的工具也能 import 專案根目錄的 model_config
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from model_config import GEMINI_NOTES
+from gemini_client import GeminiTextModel
 
 
 def setup_gemini(api_key: str):
     """設置 Gemini API"""
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel(GEMINI_NOTES)
-    return model
+    return GeminiTextModel(GEMINI_NOTES, api_key=api_key)
 
 
 def find_matching_files(base_path: str) -> List[Tuple[Path, Path, Path]]:

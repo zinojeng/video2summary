@@ -79,8 +79,8 @@ _AUDIO_MIME_TYPES = {
 def is_gemini_transcribe_model(model: Optional[str]) -> bool:
     """判斷是否要走本模組（gemini-3.5-transcribe 系列）。
 
-    舊的 gemini-2.5-flash 這類文字模型走的是
-    `google.generativeai` 的 generate_content，不在這裡處理。
+    一般的 Gemini 文字/視覺模型走 gemini_client 的 generate_content，
+    不在這裡處理。
     """
     return bool(model) and model.lower().startswith("gemini-3.5-transcribe")
 
@@ -510,23 +510,11 @@ def generate_text(prompt: str, model: str = GEMINI_TEXT_MODEL,
                   api_key: Optional[str] = None) -> str:
     """用 Gemini 文字模型跑一次生成（翻譯用）。
 
-    走的是新的 google-genai SDK，與舊的 google.generativeai 不同；
-    專案的 requirements 只安裝新的那個。
+    實作在 gemini_client，這裡只是保留既有呼叫端的入口。
     """
-    try:
-        from google import genai  # type: ignore[attr-defined]
-    except ImportError as exc:  # pragma: no cover - 取決於環境
-        raise ImportError(
-            "Gemini 翻譯需要新版 SDK：pip install google-genai"
-        ) from exc
+    from gemini_client import generate_text as _generate_text
 
-    key = api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-    if not key:
-        raise ValueError("請設定環境變數 GEMINI_API_KEY 或 GOOGLE_API_KEY")
-
-    client = genai.Client(api_key=key)
-    response = client.models.generate_content(model=model, contents=prompt)
-    return (getattr(response, "text", "") or "").strip()
+    return _generate_text(prompt, model=model, api_key=api_key)
 
 
 __all__ = [

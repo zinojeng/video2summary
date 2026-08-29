@@ -448,22 +448,19 @@ class AudioTranscriber:
                 model=model,
             )
 
-        # Gemini Model Handling
+        # Gemini Model Handling（gemini-3.5-transcribe 以外的一般 Gemini 模型）
         if "gemini" in model.lower():
-            import google.generativeai as genai
+            from gemini_client import GeminiTextModel
+
             gemini_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
             if not gemini_key:
                 raise ValueError("Missing GEMINI_API_KEY or GOOGLE_API_KEY for Gemini models.")
-            
-            genai.configure(api_key=gemini_key)
-            
-            # Ensure model name starts with 'models/' for Google GenAI SDK
-            api_model_name = model
-            if not api_model_name.startswith("models/"):
-                 api_model_name = f"models/{model}"
+
+            # 新 SDK 直接吃 `gemini-x`，不要舊 SDK 的 `models/` 前綴
+            gemini_model = GeminiTextModel(model, api_key=gemini_key)
 
             print(f"[Gemini] Uploading file to Gemini...")
-            audio_file = genai.upload_file(file_path, mime_type="audio/mp3")
+            audio_file = gemini_model.upload_file(file_path)
             
             prompt = "Generate a transcript of the speech."
             if language:
@@ -477,20 +474,14 @@ class AudioTranscriber:
                 prompt += f"\n\nPrevious Context (for continuity, do not repeat): {prompt_context}"
 
             print(f"[Gemini] Generating content...")
-            gemini_model = genai.GenerativeModel(api_model_name)
-            
+
             # Retry logic for Gemini
             max_retries = 3
             import time
-            
+
             for attempt in range(max_retries):
                 try:
-                    # Use explicit timeout if possible, though genai SDK uses request_options in recent versions
-                    # We pass request_timeout to request_options if supported, otherwise it relies on default
-                    response = gemini_model.generate_content(
-                        [prompt, audio_file],
-                        request_options={'timeout': request_timeout} 
-                    )
+                    response = gemini_model.generate_content([prompt, audio_file])
                     return response.text
                 except Exception as e:
                     print(f"⚠️  Gemini Error (Attempt {attempt+1}/{max_retries}): {e}")
@@ -578,7 +569,7 @@ class AudioTranscriber:
 
         # Gemini
         if "gemini" in trans_model.lower():
-            from gemini_transcribe import generate_text
+            from gemini_client import generate_text
             try:
                 return generate_text(
                     f"{system_prompt}\n\nText:\n{user_prompt}", model=trans_model
@@ -651,7 +642,7 @@ Rules:
             try:
                 # 轉錄模型不能做文字生成，且必須送到對的供應商去
                 if "gemini" in trans_model.lower():
-                    from gemini_transcribe import generate_text
+                    from gemini_client import generate_text
                     result = generate_text(
                         f"{system_prompt}\n\n{user_prompt}", model=trans_model
                     )

@@ -9,15 +9,16 @@ import os
 import sys
 import re
 from pathlib import Path
-import google.generativeai as genai
 from datetime import datetime
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from gemini_client import GeminiTextModel
+from model_config import GEMINI_NOTES
 
 
 def setup_gemini(api_key: str):
     """設置 Gemini API"""
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('gemini-2.5-pro')
-    return model
+    return GeminiTextModel(GEMINI_NOTES, api_key=api_key)
 
 
 def read_srt_file(file_path: str) -> str:

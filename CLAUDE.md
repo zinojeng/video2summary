@@ -59,7 +59,14 @@ python tests/test_slides.py   # slide processing
    - `upgrade_legacy_model()` maps retired IDs to current ones
    - Change models here; tools import role constants instead of literals
 
-0b. **gemini_transcribe.py**
+0b. **gemini_client.py**
+   - Shared entry point for all non-transcription Gemini calls (text + vision)
+   - `GeminiTextModel` mirrors the retired `genai.GenerativeModel` interface so
+     migrated tools kept their `.generate_content(...)` / `.text` call sites
+   - Strips `temperature` / `top_p` / `top_k`, which Gemini 3.x rejects with 400
+   - Drops the old `models/` model-name prefix, which the new SDK does not want
+
+0c. **gemini_transcribe.py**
    - `gemini-3.5-transcribe` backend via the new `google-genai` SDK
      (`client.interactions`, not `GenerativeModel.generate_content`)
    - Groups word annotations into segments on speaker change, length and duration
@@ -198,14 +205,13 @@ saved commands keep working.
   `gemini-3.5-transcribe` to a chat/translate call fails or silently misroutes.
   `resolve_translation_model()` maps a transcription model to a text model from
   the same provider.
-- **Two different Google SDKs are in play, and one is dead.**
-  `gemini-3.5-transcribe` needs the new `google-genai` (`client.interactions`).
-  The `batch_processing/` notes and merge tools plus `markitdown_helper_gemini.py`
-  still import `google.generativeai`, which now prints *"All support for the
-  `google.generativeai` package has ended"* on import. Their bump to
-  `gemini-3.7-flash` is **untested** — an unmaintained SDK may not be able to
-  address current models at all. Migrating these to `google-genai` is the next
-  piece of work; until then, run one file end to end before trusting a batch.
+- **All Gemini calls go through `google-genai`.** The old `google.generativeai`
+  package ("All support has ended") is gone from the codebase and from
+  `requirements.txt`. Do not reintroduce it. Two entry points:
+  - `gemini_client.GeminiTextModel` — text and vision. Keeps the old
+    `.generate_content(prompt).text` shape, so migrated call sites read the same.
+  - `gemini_transcribe` — transcription only, via the separate
+    `client.interactions` API.
 
 ## Audio Transcription
 

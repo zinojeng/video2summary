@@ -119,13 +119,10 @@ def convert_images_to_markdown_gemini(
         # 如果需要使用 LLM 進行圖片識別和分析
         if use_llm and api_key:
             try:
-                import google.generativeai as genai
-                
-                # 設置 API Key
-                genai.configure(api_key=api_key)
-                
-                # 創建模型實例
-                gemini_model = genai.GenerativeModel(model)
+                from gemini_client import GeminiTextModel
+
+                # 新版 google-genai SDK（舊的 google.generativeai 已停止支援）
+                gemini_model = GeminiTextModel(model, api_key=api_key)
                 
                 print(f"使用 {model} 模型分析 {len(valid_image_paths)} 張圖片...")
                 with open(output_file, 'w', encoding='utf-8') as f:
@@ -197,8 +194,8 @@ def convert_images_to_markdown_gemini(
                 return True, output_file, info
                 
             except ImportError:
-                print("Google Generative AI 模組未安裝，請執行: pip install google-generativeai pillow")
-                info["error"] = "Missing google-generativeai module"
+                print("Gemini SDK 未安裝，請執行: pip install google-genai pillow")
+                info["error"] = "Missing google-genai module"
                 info["llm_used"] = False
                 # 繼續使用基本方法
             except Exception as e:
