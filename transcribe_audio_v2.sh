@@ -23,8 +23,9 @@ PYTHON_ENTRY="$SCRIPT_DIR/gpt4o_transcribe_improved.py"
 DEFAULT_TARGET="."
 
 MODEL_OPTIONS=(
+  "gpt-transcribe"
   "gpt-4o-mini-transcribe"
-  "gpt-4o-transcribe"
+  "whisper-1"
   "gemini-3-flash-preview"
   "gemini-2.5-flash"
 )
@@ -78,10 +79,11 @@ prompt_model_selection() {
   local choice
   while true; do
     echo "Select Model to Use:"
-    echo "  1) gpt-4o-mini-transcribe (Fast/Cost-effective) - RECOMMENDED"
-    echo "  2) gpt-4o-transcribe (High Quality)"
-    echo "  3) gemini-3-flash-preview (Gemini 3 Flash)"
-    echo "  4) gemini-2.5-flash (Gemini 2.5 Flash)"
+    echo "  1) gpt-transcribe (OpenAI current recommended) - RECOMMENDED"
+    echo "  2) gpt-4o-mini-transcribe (Legacy, cheaper)"
+    echo "  3) whisper-1 (Legacy, only model with word timestamps)"
+    echo "  4) gemini-3-flash-preview (Gemini 3 Flash)"
+    echo "  5) gemini-2.5-flash (Gemini 2.5 Flash)"
     read -rp "Enter number (Default 1): " choice
     [ -z "$choice" ] && choice=1
     case "$choice" in
@@ -89,6 +91,7 @@ prompt_model_selection() {
       2) SELECTED_MODEL="${MODEL_OPTIONS[1]}"; break ;;
       3) SELECTED_MODEL="${MODEL_OPTIONS[2]}"; break ;;
       4) SELECTED_MODEL="${MODEL_OPTIONS[3]}"; break ;;
+      5) SELECTED_MODEL="${MODEL_OPTIONS[4]}"; break ;;
       *) echo "Invalid input, please try again." ;;
     esac
   done

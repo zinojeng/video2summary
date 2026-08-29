@@ -778,16 +778,21 @@ class VideoAudioProcessor:
         
         tk.Label(model_frame, text="模型選擇:").pack(side=tk.LEFT, padx=10)
         
-        self.transcribe_model_var = tk.StringVar(value="gpt-4o-transcribe")
+        self.transcribe_model_var = tk.StringVar(value="gpt-transcribe")
         
         tk.Radiobutton(
-            model_frame, text="GPT-4o", 
-            variable=self.transcribe_model_var, value="gpt-4o-transcribe"
+            model_frame, text="GPT-Transcribe (推薦)", 
+            variable=self.transcribe_model_var, value="gpt-transcribe"
         ).pack(side=tk.LEFT, padx=5)
         
         tk.Radiobutton(
-            model_frame, text="GPT-4o-Mini", 
+            model_frame, text="GPT-4o-Mini (舊版/較省)", 
             variable=self.transcribe_model_var, value="gpt-4o-mini-transcribe"
+        ).pack(side=tk.LEFT, padx=5)
+        
+        tk.Radiobutton(
+            model_frame, text="Whisper-1 (詞級時間戳)", 
+            variable=self.transcribe_model_var, value="whisper-1"
         ).pack(side=tk.LEFT, padx=5)
         
         # 輸出格式選擇
@@ -1041,7 +1046,40 @@ class VideoAudioProcessor:
         
         threading.Thread(target=transcribe_thread).start()
     
-    def transcribe_audio_to_text(self, file_path, api_key, model="gpt-4o-transcribe", output_format="text", progress_callback=None):
+    @staticmethod
+    def _plain_text_to_srt(text, audio_duration=None):
+        """把純文字估算成合法 SRT。
+
+        時間軸是估算值，不是真實時間戳；要精準時間戳請選 whisper-1。
+        """
+        sentences = [s.strip() for s in text.replace("。", ".").split(".") if s.strip()]
+        if not sentences:
+            return ""
+
+        durations = [min(max(len(s) * 0.3, 2.0), 10.0) for s in sentences]
+        total = sum(durations)
+        if audio_duration and audio_duration > 0 and total > 0:
+            scale = audio_duration / total
+            durations = [d * scale for d in durations]
+
+        def fmt(seconds):
+            h = int(seconds // 3600)
+            m = int((seconds % 3600) // 60)
+            sec = int(seconds % 60)
+            ms = int((seconds % 1) * 1000)
+            return f"{h:02d}:{m:02d}:{sec:02d},{ms:03d}"
+
+        lines = []
+        offset = 0.0
+        for idx, (sentence, dur) in enumerate(zip(sentences, durations), start=1):
+            lines.append(str(idx))
+            lines.append(f"{fmt(offset)} --> {fmt(offset + dur)}")
+            lines.append(sentence + "。")
+            lines.append("")
+            offset += dur
+        return "\n".join(lines)
+
+    def transcribe_audio_to_text(self, file_path, api_key, model="gpt-transcribe", output_format="text", progress_callback=None):
         """使用 GPT-4o 模型轉錄音訊並回傳文字。"""
         try:
             # 先嘗試使用與參考專案介面一致的模組
@@ -1059,6 +1097,7 @@ class VideoAudioProcessor:
                     output_format=output_format,
                     request_timeout=90,
                     progress_callback=progress_callback,
+                    allow_legacy_model=True,
                 )
 
             # 若無法載入模組，退回至原本的進階轉錄器
@@ -1084,11 +1123,10 @@ class VideoAudioProcessor:
 
             client = OpenAI(api_key=api_key)
 
+            # 只有 whisper-1 支援 srt/vtt；新一代轉錄模型僅接受 json/text。
             response_format = "text"
-            if output_format == "srt":
+            if output_format == "srt" and model == "whisper-1":
                 response_format = "srt"
-            elif output_format == "markdown":
-                response_format = "text"
 
             with open(file_path, "rb") as audio_file:
                 transcript = client.audio.transcriptions.create(
@@ -1097,13 +1135,16 @@ class VideoAudioProcessor:
                     response_format=response_format
                 )
 
-            if output_format == "markdown":
-                text_value = transcript.text if hasattr(transcript, "text") else transcript
-                return f"# 語音轉錄結果\n\n{text_value}\n"
-            if output_format == "srt":
-                return transcript.text if hasattr(transcript, "text") else transcript
+            text_value = transcript.text if hasattr(transcript, "text") else transcript
 
-            return transcript.text if hasattr(transcript, "text") else transcript
+            if output_format == "markdown":
+                return f"# 語音轉錄結果\n\n{text_value}\n"
+            if output_format == "srt" and response_format != "srt":
+                # 模型只回傳純文字，直接寫入 .srt 會產生無效字幕檔，
+                # 這裡估算時間軸生成合法 SRT（非真實時間戳）。
+                return self._plain_text_to_srt(text_value)
+
+            return text_value
 
         except Exception as e:
             # 如果是檔案格式錯誤，提供更詳細的說明

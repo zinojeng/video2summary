@@ -21,6 +21,30 @@ from openai import OpenAI
 import math
 
 
+# OpenAI 目前推薦的檔案轉錄模型。gpt-4o-transcribe / gpt-4o-mini-transcribe
+# 已被官方標示為「現有整合可續用，但不建議新專案採用」。
+DEFAULT_TRANSCRIBE_MODEL = "gpt-transcribe"
+
+# 只有新一代模型支援 keywords（專有名詞字面提示）。
+KEYWORDS_SUPPORTED_MODELS = {"gpt-transcribe", "gpt-live-transcribe"}
+
+# 舊模型別名 -> 新模型，方便沿用舊設定檔或指令的使用者自動升級。
+LEGACY_MODEL_ALIASES = {
+    "gpt-4o-transcribe": "gpt-transcribe",
+    "gpt-4o-mini-transcribe": "gpt-transcribe",
+}
+
+
+def resolve_transcribe_model(model, allow_legacy=False):
+    """將舊模型名稱對應到現行推薦模型。
+
+    allow_legacy=True 時原樣返回，供需要沿用舊模型的呼叫端使用。
+    """
+    if not model or allow_legacy:
+        return model
+    return LEGACY_MODEL_ALIASES.get(model, model)
+
+
 class AudioTranscriber:
     """音頻轉錄處理器"""
 
@@ -140,6 +164,33 @@ class AudioTranscriber:
 
         self.log_stage("音訊提取完成")
         return output_path
+
+    @staticmethod
+    def _normalize_segments(segments):
+        """把模型回傳的 segment 統一成純 dict，避免 json.dump 失敗。
+
+        whisper-1 的 verbose_json 會回傳 TranscriptionSegment 物件，
+        直接丟給 json.dump 會噴 TypeError。
+        """
+        if not segments:
+            return []
+
+        normalized = []
+        for seg in segments:
+            if isinstance(seg, dict):
+                start, end, text = seg.get('start'), seg.get('end'), seg.get('text')
+            else:
+                start = getattr(seg, 'start', None)
+                end = getattr(seg, 'end', None)
+                text = getattr(seg, 'text', None)
+            if start is None or end is None:
+                continue
+            normalized.append({
+                'start': float(start),
+                'end': float(end),
+                'text': text or "",
+            })
+        return normalized
 
     def get_audio_duration(self, file_path):
         """取得音訊長度（秒）"""
@@ -280,16 +331,21 @@ class AudioTranscriber:
     def transcribe_file(
         self,
         file_path,
-        model="gpt-4o-transcribe",
+        model=DEFAULT_TRANSCRIBE_MODEL,
         language="zh",
         response_format="text",  # 保留參數以維持 API 相容性，但內部固定使用 json 格式
         request_timeout=90,
         prompt_context=None,
+        keywords=None,
     ):
         """轉錄單個音頻檔案
 
         Note: response_format 參數保留以維持向後相容，但 OpenAI API 呼叫時
-        固定使用 json 格式以取得時間戳資訊（gpt-4o-transcribe 模型只支援 json/text）。
+        固定使用 json 格式以取得時間戳資訊（轉錄模型只支援 json/text，
+        詞級時間戳與 srt/vtt 仍只有 whisper-1 支援）。
+
+        keywords: 可選的字串列表，提供音檔中可能出現的專有名詞（藥名、縮寫、
+        講者名），僅 gpt-transcribe / gpt-live-transcribe 支援。
         """
         _ = response_format  # 標記為有意忽略
         # 確保檔案有正確的副檔名
@@ -366,7 +422,7 @@ class AudioTranscriber:
         # We rely on the `translate` feature explicitly properly converting it later.
         
         # Prepare arguments
-        # gpt-4o-transcribe 模型只支援 'json' 或 'text' 格式
+        # 轉錄模型只支援 'json' 或 'text' 格式
         # 使用 'json' 格式可取得時間戳資訊
         kwargs = {
             "model": model,
@@ -375,11 +431,34 @@ class AudioTranscriber:
             "response_format": "json",
             "timeout": request_timeout,
         }
+
+        # whisper-1 是唯一會回傳 segment/word 時間戳的模型，但必須要求
+        # verbose_json；用 json 的話拿不到 segments，SRT 只能退回估算時間。
+        if model == "whisper-1":
+            kwargs["response_format"] = "verbose_json"
+            kwargs["timestamp_granularities"] = ["segment"]
         
         if prompt_context:
             kwargs["prompt"] = prompt_context
 
-        transcript = self.client.audio.transcriptions.create(**kwargs)
+        # keywords 尚未進入 openai python SDK 的具名參數，透過 extra_body 傳送。
+        sent_keywords = False
+        if keywords and model in KEYWORDS_SUPPORTED_MODELS:
+            kwargs["extra_body"] = {"keywords": list(keywords)}
+            sent_keywords = True
+
+        try:
+            transcript = self.client.audio.transcriptions.create(**kwargs)
+        except Exception as e:
+            # 若後端不接受 keywords（SDK/API 版本落差），去掉後重試一次，
+            # 避免整份轉錄因為選用性提示而失敗。
+            if sent_keywords and "keywords" in str(e).lower():
+                print(f"[Warn] keywords 被拒絕，改以不帶 keywords 重試。原始錯誤：{e}")
+                kwargs.pop("extra_body", None)
+                file_like.seek(0)
+                transcript = self.client.audio.transcriptions.create(**kwargs)
+            else:
+                raise
             
         return transcript
 
@@ -531,7 +610,7 @@ Rules:
     def transcribe(
         self,
         audio_path,
-        model="gpt-4o-transcribe",
+        model=DEFAULT_TRANSCRIBE_MODEL,
         language="zh",
         output_format="text",
         auto_convert=True,
@@ -540,6 +619,7 @@ Rules:
         translate_langs=None,
         cleanup=False,
         progress_callback=None,
+        keywords=None,
     ):
         """主要轉錄功能，處理所有邏輯
 
@@ -611,6 +691,14 @@ Rules:
             if duration and segment_duration:
                 needs_split = needs_split or duration > segment_duration
 
+            # 分段快取的識別碼：模型或 keywords 改變時，舊的 segment 轉錄
+            # 結果就不能再沿用。
+            run_signature = {
+                'model': model,
+                'language': language,
+                'keywords': sorted(keywords) if keywords else None,
+            }
+
             final_text_map = {'original': ""}
             for lang in translate_langs:
                 final_text_map[lang] = ""
@@ -657,18 +745,27 @@ Rules:
                     # 1. Get Original Transcript (Load or Transcribe)
                     msg_prefix = f"第 {i+1}/{len(segments)} 段"
                     
+                    cached = None
                     if transcript_json_file.exists() and transcript_json_file.stat().st_size > 0:
-                        print(f"✓ [{msg_prefix}] 發現已存檔原文(JSON)，跳過轉錄")
                         import json
                         with open(transcript_json_file, "r", encoding="utf-8") as f:
                             saved_data = json.load(f)
-                            segment_data['text'] = saved_data.get('text', "")
-                            segment_data['segments'] = saved_data.get('segments', [])
-                    elif transcript_file.exists() and transcript_file.stat().st_size > 0:
-                         # Legacy fallback
-                        print(f"✓ [{msg_prefix}] 發現已存檔原文(Text)，跳過轉錄")
-                        with open(transcript_file, "r", encoding="utf-8") as f:
-                            segment_data['text'] = f.read()
+                        cached_signature = saved_data.get('run_signature')
+                        if cached_signature == run_signature:
+                            cached = saved_data
+                        elif cached_signature is None:
+                            # 舊版快取沒有記錄產生它的模型/keywords，無法確認是否
+                            # 與這次設定相符，只能重跑（僅影響此變更前留下的快取）。
+                            print(f"↻ [{msg_prefix}] 舊版快取未記錄模型設定，重新轉錄")
+                        else:
+                            # 模型或 keywords 換過了，舊快取不能沿用，否則會拿回
+                            # 上一個模型的結果卻完全沒發出新請求。
+                            print(f"↻ [{msg_prefix}] 快取來自不同模型/keywords 設定，重新轉錄")
+
+                    if cached is not None:
+                        print(f"✓ [{msg_prefix}] 發現已存檔原文(JSON)，跳過轉錄")
+                        segment_data['text'] = cached.get('text', "")
+                        segment_data['segments'] = cached.get('segments', [])
                     else:
                         self.log_stage(f"{msg_prefix} 上傳並轉錄")
                         try:
@@ -679,7 +776,8 @@ Rules:
                                 language,
                                 "text",
                                 request_timeout=request_timeout,
-                                prompt_context=last_transcript_tail
+                                prompt_context=last_transcript_tail,
+                                keywords=keywords
                             )
                             
                             transcript_text = ""
@@ -692,11 +790,13 @@ Rules:
                             else:
                                 transcript_text = str(transcript)
                                 
-                            # Extract detailed segments if available (OpenAI json format)
+                            # Extract detailed segments if available
+                            # (whisper-1 + verbose_json 才會有；且回傳的是 pydantic
+                            #  物件，必須轉成純 dict 才能寫進 JSON 快取)
                             if hasattr(transcript, 'segments'):
-                                detailed_segments = transcript.segments
+                                detailed_segments = self._normalize_segments(transcript.segments)
                             elif isinstance(transcript, dict) and 'segments' in transcript:
-                                detailed_segments = transcript['segments']
+                                detailed_segments = self._normalize_segments(transcript['segments'])
                             
                             # === Repetition Loop 偵測 ===
                             rep = self.detect_repetition(transcript_text)
@@ -707,6 +807,22 @@ Rules:
                                 print(f"    已截斷重複部分，保留有效內容 "
                                       f"({len(rep['clean_text'])}/{len(transcript_text)} chars)")
                                 transcript_text = rep['clean_text']
+
+                            # 先刪掉這段的舊翻譯，再寫入新原文。
+                            # 順序很重要：若在此之後中斷，下次要嘛因為沒有 JSON
+                            # 而重轉，要嘛因為沒有翻譯檔而重譯，都不會留下與新
+                            # 原文對不上的舊翻譯。
+                            for lang in translate_langs:
+                                stale_trans = transcripts_dir / f"{segment_name}_{lang}.txt"
+                                if stale_trans.exists():
+                                    try:
+                                        stale_trans.unlink()
+                                    except OSError as unlink_err:
+                                        # 刪不掉就不能寫入新原文，否則會留下與新
+                                        # 原文對不上的舊翻譯。寧可中止讓使用者處理。
+                                        raise Exception(
+                                            f"無法刪除過期翻譯檔 {stale_trans}: {unlink_err}"
+                                        ) from unlink_err
 
                             # Save text transcript
                             with open(transcript_file, "w", encoding="utf-8") as f:
@@ -719,6 +835,7 @@ Rules:
                                     'text': transcript_text,
                                     'segments': detailed_segments,
                                     'repetition_detected': rep['has_repetition'],
+                                    'run_signature': run_signature,
                                 }, f, ensure_ascii=False)
 
                             print(f"✓ [{msg_prefix}] 轉錄已儲存")
@@ -736,6 +853,8 @@ Rules:
                         last_transcript_tail = current_text[-200:] if len(current_text) > 200 else current_text
 
                     # 2. Translate (Load or Translate)
+                    # 不變式：翻譯檔存在 == 它對應的是目前這份原文
+                    # （重轉原文時已把舊翻譯刪掉）。
                     for lang in translate_langs:
                         trans_file = transcripts_dir / f"{segment_name}_{lang}.txt"
                         if trans_file.exists() and trans_file.stat().st_size > 0:
@@ -841,6 +960,7 @@ Rules:
                     language,
                     resp_format, # Use corrected output format
                     request_timeout=request_timeout,
+                    keywords=keywords,
                 )
                 
                 final_text = ""
@@ -910,7 +1030,12 @@ Rules:
                 elif output_format == "srt":
                      # If it's single chunk and API gave text, convert to SRT fallback
                      if isinstance(txt, str) and not txt.strip() == "":
-                         final_text_map[key] = self.generate_srt_fallback(txt)
+                         if key == 'original':
+                             print(f"[Warn] 模型 {model} 未回傳 segment 時間戳，"
+                                   f"SRT 時間軸為估算值；需要精準時間戳請改用 --model whisper-1")
+                         final_text_map[key] = self.generate_srt_fallback(
+                             txt, audio_duration=duration
+                         )
 
             self.log_stage("整理輸出內容")
             _emit("整理輸出內容…", 0.98)
@@ -998,33 +1123,46 @@ Rules:
                 
         return "\n".join(srt_content)
         
-    def generate_srt_fallback(self, text):
-        """當 API 不支援 SRT 格式時的回退方法"""
+    def generate_srt_fallback(self, text, audio_duration=None):
+        """當模型不回傳 segment 時間戳時的回退方法。
+
+        時間軸是「估算」出來的，不是真實時間戳。若提供 audio_duration，
+        會把估算長度等比縮放到實際音檔長度，避免長音檔的字幕在幾分鐘後
+        就結束。要真正精準的時間戳請改用 whisper-1。
+        """
         sentences = [s.strip() for s in text.replace('。', '.').split('.') if s.strip()]
-        srt_content = []
-        subtitle_index = 1
-        time_offset = 0
-        
-        # 假設平均每個字 0.3 秒
+        if not sentences:
+            return ""
+
+        # 先用每字 0.3 秒估出各句相對長度（僅上下限夾住極端值）
+        raw_durations = []
         for sentence in sentences:
-            duration = len(sentence) * 0.3
-            duration = max(duration, 2.0)  # 最少 2 秒
-            duration = min(duration, 10.0)  # 最多 10 秒
-            
+            d = len(sentence) * 0.3
+            raw_durations.append(min(max(d, 2.0), 10.0))
+
+        # 若知道實際音檔長度，等比縮放讓字幕鋪滿整段音訊
+        total_raw = sum(raw_durations)
+        if audio_duration and audio_duration > 0 and total_raw > 0:
+            scale = audio_duration / total_raw
+            raw_durations = [d * scale for d in raw_durations]
+        else:
+            print("[Warn] 無法取得音檔長度，SRT 時間軸為純估算值，可能與實際語音不同步")
+
+        srt_content = []
+        time_offset = 0.0
+        for subtitle_index, (sentence, duration) in enumerate(zip(sentences, raw_durations), start=1):
             start_time = time_offset
             end_time = time_offset + duration
-            
-            start_srt = self.format_srt_time(start_time)
-            end_srt = self.format_srt_time(end_time)
-            
+
             srt_content.append(f"{subtitle_index}")
-            srt_content.append(f"{start_srt} --> {end_srt}")
+            srt_content.append(
+                f"{self.format_srt_time(start_time)} --> {self.format_srt_time(end_time)}"
+            )
             srt_content.append(sentence + '。')
             srt_content.append("")  # 空行分隔
-            
-            subtitle_index += 1
+
             time_offset = end_time
-            
+
         return "\n".join(srt_content)
         
     def format_srt_time(self, seconds):
@@ -1042,8 +1180,13 @@ def main():
         description="改進的 GPT-4o 語音轉文字工具"
     )
     parser.add_argument("audio_file", help="音頻檔案路徑")
-    parser.add_argument("--model", default="gpt-4o-transcribe",
-                       help="選擇模型 (例如 gpt-4o-mini-transcribe, gemini-2.0-flash-exp)")
+    parser.add_argument("--model", default=DEFAULT_TRANSCRIBE_MODEL,
+                       help="選擇模型 (預設 gpt-transcribe；亦可用 whisper-1、"
+                            "gemini-2.0-flash-exp 等)")
+    parser.add_argument("--keywords",
+                       help="專有名詞提示，用逗號分隔 (例如: HbA1c,GLP-1,dapagliflozin)")
+    parser.add_argument("--allow-legacy-model", action="store_true",
+                       help="不要把 gpt-4o-transcribe 等舊模型自動改寫為 gpt-transcribe")
     parser.add_argument("--language", default="zh", help="語言代碼")
     parser.add_argument("--format", default="text",
                        choices=["text", "markdown", "srt"],
@@ -1059,6 +1202,16 @@ def main():
     parser.add_argument("--cleanup", action="store_true", help="完成後清理暫存檔案")
     
     args = parser.parse_args()
+
+    resolved_model = resolve_transcribe_model(args.model, args.allow_legacy_model)
+    if resolved_model != args.model:
+        print(f"提示：{args.model} 已非 OpenAI 建議模型，改用 {resolved_model}"
+              f"（要沿用舊模型請加 --allow-legacy-model）")
+    args.model = resolved_model
+
+    keywords = []
+    if args.keywords:
+        keywords = [k.strip() for k in args.keywords.split(',') if k.strip()]
 
     if args.max_segment_seconds <= 0:
         print("錯誤：max-segment-seconds 需為正整數")
@@ -1101,7 +1254,8 @@ def main():
             segment_duration=args.max_segment_seconds,
             request_timeout=args.request_timeout,
             translate_langs=translate_langs,
-            cleanup=args.cleanup
+            cleanup=args.cleanup,
+            keywords=keywords
         )
         
         # 處理輸出
